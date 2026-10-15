@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sferic Gallery</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M13 2 4 14h6l-1 8 9-12h-6l1-8z%22 fill=%22%23e3d84f%22/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/gallery/gallery.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <a class="brand" href="#/">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="currentColor"/></svg>
+          <span>Sferic</span>
+          <small>charts</small>
+        </a>
+        <input id="search" type="search" placeholder="Search examples" autocomplete="off" />
+        <nav id="nav"></nav>
+      </aside>
+      <main id="main">
+        <header id="topbar">
+          <div class="crumbs"><span id="ex-cat"></span><h1 id="ex-title">Examples</h1></div>
+          <div class="tools">
+            <span id="fps" title="Frames per second"></span>
+            <select id="theme" title="Theme"></select>
+            <button id="btn-source" title="Show source">Source</button>
+          </div>
+        </header>
+        <section id="stage">
+          <div id="chart-host"></div>
+          <aside id="source" hidden><pre><code id="code"></code></pre></aside>
+        </section>
+        <footer id="desc"></footer>
+      </main>
+    </div>
+    <script type="module" src="/gallery/main.ts"></script>
+  </body>
+</html>

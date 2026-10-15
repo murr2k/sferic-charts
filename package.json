@@ -1,0 +1,54 @@
+{
+  "name": "sferic-charts",
+  "version": "0.1.0",
+  "description": "GPU-accelerated WebGL2 charting library for the browser: real-time, large-data, 3D and dashboard charts",
+  "keywords": [
+    "chart",
+    "charts",
+    "webgl",
+    "webgl2",
+    "gpu",
+    "real-time",
+    "visualization",
+    "dataviz",
+    "heatmap",
+    "3d",
+    "dashboard"
+  ],
+  "author": "Murray Kopit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/murr2k/sferic-charts.git"
+  },
+  "type": "module",
+  "main": "dist/sferic.umd.cjs",
+  "module": "dist/sferic.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/sferic.js",
+      "require": "./dist/sferic.umd.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "snap": "node scripts/snap.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4"
+  }
+}
