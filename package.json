@@ -40,14 +40,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.build.json",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc -p tsconfig.build.json && node scripts/fix-dts.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "snap": "node scripts/snap.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "verify:package": "node scripts/verify-package.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build:lib && npm run verify:package",
+    "test:browser": "node scripts/robustness.mjs"
   },
   "devDependencies": {
-    "puppeteer-core": "^23.11.1",
+    "puppeteer-core": "^25.14.0",
     "typescript": "^5.9.3",
     "vite": "^6.4.4"
   }

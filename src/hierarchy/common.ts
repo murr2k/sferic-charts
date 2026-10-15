@@ -374,26 +374,26 @@ export class Instances {
     return this.n++ * this.stride
   }
   /** Upload and return the GL buffers. */
+  private ctx: WebGL2RenderingContext | null = null
   upload(gl: WebGL2RenderingContext): [WebGLBuffer, WebGLBuffer] {
+    if (this.ctx !== gl) {
+      // New (or replacement) context: old handles are invalid.
+      this.fbuf = this.cbuf = null
+      this.ctx = gl
+    }
     if (!this.fbuf) {
       this.fbuf = gl.createBuffer()!
       this.cbuf = gl.createBuffer()!
     }
-    if (this.cap < this.c.length) {
-      this.cap = this.c.length
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.fbuf)
-      gl.bufferData(gl.ARRAY_BUFFER, this.cap * this.stride * 4, gl.DYNAMIC_DRAW)
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.cbuf)
-      gl.bufferData(gl.ARRAY_BUFFER, this.cap * 4, gl.DYNAMIC_DRAW)
-    }
+    // Whole-buffer uploads (orphaning) so a buffer still in flight never stalls the pipeline.
     gl.bindBuffer(gl.ARRAY_BUFFER, this.fbuf)
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.f, 0, this.n * this.stride)
+    gl.bufferData(gl.ARRAY_BUFFER, this.f.subarray(0, Math.max(1, this.n * this.stride)), gl.DYNAMIC_DRAW)
     gl.bindBuffer(gl.ARRAY_BUFFER, this.cbuf)
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.c, 0, this.n)
+    gl.bufferData(gl.ARRAY_BUFFER, this.c.subarray(0, Math.max(1, this.n)), gl.DYNAMIC_DRAW)
     return [this.fbuf, this.cbuf!]
   }
   dispose(r: GLRenderer | null) {
-    if (r && this.fbuf) {
+    if (r && this.fbuf && r.gl === this.ctx) {
       r.gl.deleteBuffer(this.fbuf)
       r.gl.deleteBuffer(this.cbuf)
     }

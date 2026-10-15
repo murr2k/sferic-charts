@@ -18,21 +18,22 @@ function usePx(r: GLRenderer, p: Program) { r.useXform(p, makeXform(ID, ID, 0, 0
 /** Grow-only dynamic buffer. */
 class Buf {
   buf: WebGLBuffer | null = null
-  private cap = 0
+  private ctx: WebGL2RenderingContext | null = null
+  /** True when the handle belongs to a lost context and must be re-uploaded. */
+  stale(gl: WebGL2RenderingContext) { return this.buf !== null && this.ctx !== gl }
+  /** Whole-buffer upload (orphaning avoids stalls on buffers still in flight). */
   upload(gl: WebGL2RenderingContext, data: Float32Array | Uint32Array, count: number) {
+    if (this.ctx !== gl) {
+      this.buf = null
+      this.ctx = gl
+    }
     if (!this.buf) this.buf = gl.createBuffer()!
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf)
-    const bytes = count * 4
-    if (bytes > this.cap) {
-      this.cap = Math.max(bytes, this.cap * 2, 4096)
-      gl.bufferData(gl.ARRAY_BUFFER, this.cap, gl.DYNAMIC_DRAW)
-    }
-    if (count > 0) gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count)
+    gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, Math.max(count, 1)), gl.DYNAMIC_DRAW)
   }
   dispose(r: GLRenderer | null) {
-    if (r && this.buf) r.gl.deleteBuffer(this.buf)
+    if (r && this.buf && r.gl === this.ctx) r.gl.deleteBuffer(this.buf)
     this.buf = null
-    this.cap = 0
   }
 }
 
@@ -78,7 +79,7 @@ export class PxSegments {
   draw(r: GLRenderer, color: Color, thickness: number, dashed: DashedLine | null) {
     if (!this.n || color.a === 0 || thickness === 0) return
     const gl = r.gl
-    if (this.dirty) {
+    if (this.dirty || this.pb.stale(gl)) {
       this.pb.upload(gl, this.pos, this.n * 4)
       this.cb.upload(gl, this.col, this.n * 2)
       if (dashed) this.db.upload(gl, this.dist, this.n)
@@ -151,7 +152,7 @@ export class PxPoints {
   draw(r: GLRenderer, st: PxPointStyle) {
     if (!this.n || st.size <= 0 || st.color.a === 0) return
     const gl = r.gl
-    if (this.dirty) {
+    if (this.dirty || this.pb.stale(gl)) {
       this.pb.upload(gl, this.pos, this.n * 2)
       this.cb.upload(gl, this.col, this.n)
       this.dirty = false
@@ -246,7 +247,7 @@ export class PxTriangles {
   draw(r: GLRenderer, color: Color = WHITE_COLOR, lutFill: PolarLUTFill | null = null) {
     if (this.n < 3) return
     const gl = r.gl
-    if (this.dirty) {
+    if (this.dirty || this.pb.stale(gl)) {
       this.pb.upload(gl, this.pos, this.n * 2)
       this.cb.upload(gl, this.col, this.n)
       this.dirty = false

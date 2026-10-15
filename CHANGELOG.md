@@ -6,6 +6,40 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Type declarations resolve under `moduleResolution` `node16` and `nodenext`
+  (relative imports now carry explicit `.js` extensions).
+- When WebGL2 cannot be created, 2D-only charts keep rendering and GPU-rendered panels
+  show a notice instead of every chart on the page stopping; creation is retried.
+- GPU context loss is recovered: the shared context is replaced and every chart
+  re-uploads its data and redraws.
+- The map decoder validates TopoJSON and GeoJSON input (arc references, coordinates,
+  transform, nesting depth, size budget) and throws descriptive errors.
+- Polar and hierarchy GPU buffers are re-specified whole instead of partially updated,
+  avoiding pipeline stalls.
+
+### Changed
+
+- GPU memory is reclaimed: the shared context is released a few seconds after the last
+  chart is disposed, oversized render targets shrink, and idle MSAA buffers are freed.
+- Diagnostics moved from page globals to an exported `debug` object; importing the
+  library no longer touches any global.
+- Chart canvases expose `role="img"` and an `aria-label` (the chart title by default,
+  or `setAccessibleLabel()`).
+
+### Added
+
+- `npm test` (hostile-input tests for the map decoder), `npm run test:browser`
+  (context loss, no-WebGL, GPU memory and accessibility checks),
+  `npm run verify:package`, and a `prepublishOnly` gate running typecheck, tests,
+  build and package verification.
+
+### Security
+
+- Dev dependency `puppeteer-core` upgraded to 25, clearing seven high-severity
+  advisories in its download helpers (never shipped to consumers).
+
 ## [0.1.0] - 2026-10-15
 
 First release.

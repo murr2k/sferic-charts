@@ -19,6 +19,7 @@ export { PointLineAreaSeries, PointShape, StepOptions } from './xy/series/PointL
 export { SeriesXY } from './xy/series/SeriesXY'
 export { HeatmapGridSeries, HeatmapScrollingGridSeries } from './xy/series/HeatmapSeries'
 export { Dashboard } from './dashboard/Dashboard'
+export { debug } from './render/Surface'
 export { UIPanel } from './dashboard/UIPanel'
 export { synchronizeAxisIntervals, synchronizeCursors } from './xy/sync'
 export { BoxSeries, BoxFigure } from './xy/series/BoxSeries'

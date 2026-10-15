@@ -215,10 +215,21 @@ export class ShapeBatch {
     if (hi > ch.xmax) ch.xmax = hi
   }
 
+  private ctx: WebGL2RenderingContext | null = null
+
   draw(r: GLRenderer, maps: { mx: AxisMap; my: AxisMap }, o: ShapeDrawOptions = {}) {
     if (!this.used) return
     const gl = r.gl
     const prog = r.program('sferic-shape', SHAPE_VS, SHAPE_FS)
+    if (this.ctx !== gl) {
+      // New (or replacement) context: drop handles, re-upload every chunk.
+      for (const ch of this.chunks) {
+        ch.buf = null
+        ch.gpuCap = 0
+        ch.dirtyFrom = 0
+      }
+      this.ctx = gl
+    }
     const m = o.margin ?? 0
     const vx0 = (o.x0 ?? -Infinity) - m, vx1 = (o.x1 ?? Infinity) + m
     let first = true
@@ -261,7 +272,7 @@ export class ShapeBatch {
 
   dispose(r: GLRenderer | null) {
     for (const c of this.chunks) {
-      if (r && c.buf) r.gl.deleteBuffer(c.buf)
+      if (r && c.buf && r.gl === this.ctx) r.gl.deleteBuffer(c.buf)
       c.buf = null
       c.gpuCap = 0
       c.dirtyFrom = 0

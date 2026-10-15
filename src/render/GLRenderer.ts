@@ -118,6 +118,9 @@ export class GLRenderer {
     this.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault()
       this.lost = true
+      // A replacement context is created on the next frame; holders of GPU handles
+      // notice the new context object and re-upload from their CPU copies.
+      if (!this.releasing) lostHandler?.()
     })
     this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE)
     this.samples = Math.min(4, gl.getParameter(gl.MAX_SAMPLES) || 0)
@@ -445,7 +448,7 @@ export class GLRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
-  private disposeTargets() {
+  private disposeMsaa() {
     const gl = this.gl
     for (const rb of this.msRb) gl.deleteRenderbuffer(rb)
     this.msRb = []
@@ -453,6 +456,11 @@ export class GLRenderer {
     if (this.msFbo) gl.deleteFramebuffer(this.msFbo)
     this.msDepthRb = null
     this.msFbo = null
+  }
+
+  private disposeTargets() {
+    const gl = this.gl
+    this.disposeMsaa()
     if (!this.directFbo) return
     if (this.depthRb) gl.deleteRenderbuffer(this.depthRb)
     gl.deleteFramebuffer(this.directFbo)
@@ -466,6 +474,70 @@ export class GLRenderer {
     }
     this.blur = []
     this.directFbo = null
+  }
+
+  // ---------------------------------------------------------------- memory management
+
+  private releasing = false
+  private oversizeSince = 0
+  private msaaIdleSince = 0
+
+  /**
+   * Called once per frame with the largest surface rendered. Render targets that stay
+   * far larger than needed for 5 s are reallocated, and MSAA buffers unused for 10 s
+   * are freed, so a briefly fullscreen chart does not pin GPU memory forever.
+   */
+  trim(w: number, h: number, msaa: boolean, now: number) {
+    const oversize = this.W * this.H > 2 * w * h && (this.W > w * 1.25 || this.H > h * 1.25)
+    if (!oversize) this.oversizeSince = 0
+    else if (!this.oversizeSince) this.oversizeSince = now
+    else if (now - this.oversizeSince > 5000) {
+      this.disposeTargets()
+      this.W = this.H = 0
+      this.oversizeSince = 0
+    }
+    if (msaa || !this.msFbo) this.msaaIdleSince = 0
+    else if (!this.msaaIdleSince) this.msaaIdleSince = now
+    else if (now - this.msaaIdleSince > 10_000) {
+      this.disposeMsaa()
+      this.msaaIdleSince = 0
+    }
+  }
+
+  /** Approximate GPU memory held by render targets. */
+  memoryInfo() {
+    const px = this.W * this.H
+    const msaaBytes = this.msFbo ? px * 4 * this.samples * 3 : 0
+    const bytes = px * 4 * 4 + px * 4 * (2 / 4 + 2 / 16) + msaaBytes
+    return { targetW: this.W, targetH: this.H, msaa: !!this.msFbo, approxMB: Math.round(bytes / 1048576) }
+  }
+
+  /** Testing aid: force a context loss through WEBGL_lose_context. */
+  simulateLoss() {
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext()
+  }
+
+  /** Free every GPU resource and the context itself. The renderer is unusable afterwards. */
+  release() {
+    const gl = this.gl
+    this.releasing = true
+    if (!gl.isContextLost()) {
+      this.disposeTargets()
+      for (const p of this.programs.values()) gl.deleteProgram(p.prog)
+      for (const v of this.lutTex.values()) gl.deleteTexture(v.tex)
+      for (const t of this.gradTex.values()) gl.deleteTexture(t)
+      gl.deleteTexture(this.whiteTex)
+      gl.deleteBuffer(this.cornerQuad)
+      gl.deleteBuffer(this.cornerLine)
+      gl.deleteBuffer(this.cornerPoint)
+      gl.deleteVertexArray(this.vao)
+    }
+    this.programs.clear()
+    this.lutTex.clear()
+    this.gradTex.clear()
+    this.lost = true
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    this.canvas.width = this.canvas.height = 1
   }
 
   /** Start rendering a surface of w x h device pixels. */
@@ -632,12 +704,20 @@ export class GLRenderer {
 }
 
 let shared: GLRenderer | null = null
+let lostHandler: (() => void) | null = null
+/** Register the callback run when the shared context is lost (the Surface scheduler). */
+export function setRendererLostHandler(fn: () => void) { lostHandler = fn }
 /** The shared context if one exists (never creates one); for freeing resources. */
 export function existingRenderer(): GLRenderer | null {
   return shared && !shared.lost ? shared : null
 }
-/** The process-wide shared GL context. */
+/** The process-wide shared GL context, replaced transparently after a context loss. */
 export function getRenderer(): GLRenderer {
-  if (!shared || shared.lost) shared = new GLRenderer()
+  if (!shared || shared.lost || shared.gl.isContextLost()) shared = new GLRenderer()
   return shared
+}
+/** Free the shared context and all its GPU memory (it is recreated on demand). */
+export function releaseRenderer() {
+  shared?.release()
+  shared = null
 }

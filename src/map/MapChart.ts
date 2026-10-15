@@ -161,6 +161,7 @@ export class MapChart extends Panel {
   private geomVer = 0
   private gpuVer = -1
   private vbuf: WebGLBuffer | null = null
+  private glCtx: WebGL2RenderingContext | null = null
   private ibuf: WebGLBuffer | null = null
   private tex: WebGLTexture | null = null
   private texH = 0
@@ -583,6 +584,12 @@ export class MapChart extends Panel {
     const gl = r.gl
     const P = this.plot
     if (P.w <= 0 || P.h <= 0 || !this.fillIdx.length) return
+    if (this.glCtx !== gl) {
+      // New (or replacement) context: recreate buffers and the region color texture.
+      this.vbuf = this.ibuf = null
+      this.tex = null
+      this.glCtx = gl
+    }
     if (this.gpuVer !== this.geomVer || !this.vbuf) {
       if (!this.vbuf) {
         this.vbuf = gl.createBuffer()!
@@ -779,7 +786,7 @@ export class MapChart extends Panel {
   }
 
   override disposeGL(r: GLRenderer | null) {
-    if (r) {
+    if (r && r.gl === this.glCtx) {
       if (this.vbuf) r.gl.deleteBuffer(this.vbuf)
       if (this.ibuf) r.gl.deleteBuffer(this.ibuf)
       if (this.tex) r.gl.deleteTexture(this.tex)

@@ -248,6 +248,7 @@ export class RectBatch {
   private cbuf: WebGLBuffer | null = null
   private gpuCap = 0
   private dirty = true
+  private ctx: WebGL2RenderingContext | null = null
 
   clear() { this.n = 0; this.dirty = true }
   setOrigin(ox: number, oy: number) { this.ox = ox; this.oy = oy }
@@ -272,6 +273,13 @@ export class RectBatch {
   ) {
     if (!this.n) return
     const gl = r.gl
+    if (this.ctx !== gl) {
+      // New (or replacement) context: old handles are invalid.
+      this.buf = this.cbuf = null
+      this.gpuCap = 0
+      this.dirty = true
+      this.ctx = gl
+    }
     if (!this.buf) {
       this.buf = gl.createBuffer()!
       this.cbuf = gl.createBuffer()!
@@ -305,7 +313,7 @@ export class RectBatch {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.n)
   }
   dispose(r: GLRenderer | null) {
-    if (r && this.buf) {
+    if (r && this.buf && r.gl === this.ctx) {
       r.gl.deleteBuffer(this.buf)
       r.gl.deleteBuffer(this.cbuf)
     }
@@ -326,6 +334,7 @@ export class SegmentBatch {
   private cbuf: WebGLBuffer | null = null
   private gpuCap = 0
   private dirty = true
+  private ctx: WebGL2RenderingContext | null = null
   clear() { this.n = 0; this.dirty = true }
   setOrigin(ox: number, oy: number) { this.ox = ox; this.oy = oy }
   push(x0: number, y0: number, x1: number, y1: number, color: Color | number) {
@@ -345,6 +354,13 @@ export class SegmentBatch {
   draw(r: GLRenderer, maps: { mx: AxisMap; my: AxisMap }, thickness: number) {
     if (!this.n) return
     const gl = r.gl
+    if (this.ctx !== gl) {
+      // New (or replacement) context: old handles are invalid.
+      this.buf = this.cbuf = null
+      this.gpuCap = 0
+      this.dirty = true
+      this.ctx = gl
+    }
     if (!this.buf) {
       this.buf = gl.createBuffer()!
       this.cbuf = gl.createBuffer()!
@@ -378,7 +394,7 @@ export class SegmentBatch {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.n)
   }
   dispose(r: GLRenderer | null) {
-    if (r && this.buf) {
+    if (r && this.buf && r.gl === this.ctx) {
       r.gl.deleteBuffer(this.buf)
       r.gl.deleteBuffer(this.cbuf)
     }
@@ -399,6 +415,7 @@ export class HeatmapTexture {
   filled: number
   private tex: WebGLTexture | null = null
   private dirtyAll = true
+  private ctx: WebGL2RenderingContext | null = null
   private dirtyCols: number[] = []
   constructor(cols: number, rows: number, cap = 0) {
     this.cols = cols
@@ -461,6 +478,10 @@ export class HeatmapTexture {
   }
   bind(r: GLRenderer, unit: number) {
     const gl = r.gl
+    if (this.ctx !== gl) {
+      this.tex = null
+      this.ctx = gl
+    }
     gl.activeTexture(gl.TEXTURE0 + unit)
     if (!this.tex) {
       this.tex = gl.createTexture()!
@@ -535,7 +556,7 @@ export class HeatmapTexture {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }
   dispose(r: GLRenderer | null) {
-    if (r && this.tex) r.gl.deleteTexture(this.tex)
+    if (r && this.tex && r.gl === this.ctx) r.gl.deleteTexture(this.tex)
     this.tex = null
   }
 }

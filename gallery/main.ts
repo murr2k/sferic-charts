@@ -1,4 +1,4 @@
-import { Themes, Theme } from '../src'
+import { Themes, Theme, debug } from '../src'
 import type { Example } from './types'
 
 const modules = import.meta.glob<{ default: Example }>('./examples/*.ts', { eager: true })
@@ -284,8 +284,10 @@ const loop = (t: number) => {
 }
 fpsRaf = requestAnimationFrame(loop)
 
-// Dev helper: POST the current chart canvas to the Vite snapshot sink (see vite.config.ts).
+// Dev helpers: frame stats for the headless scripts, and a snapshot sink (see vite.config.ts).
 if (import.meta.env.DEV) {
+  ;(window as any).__sfericStats = debug.stats
+  ;(window as any).__sfericDebug = debug
   ;(window as any).__snap = async (name: string) => {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
     const c = host.querySelector('canvas')

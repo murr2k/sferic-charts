@@ -47,6 +47,7 @@ abstract class SurfaceBase extends Series3D {
   protected hgt: Float32Array
   protected intens: Float32Array | null = null
   private texH: WebGLTexture | null = null
+  private texCtx: WebGL2RenderingContext | null = null
   private texI: WebGLTexture | null = null
   protected dirtyH = new Uint8Array(0)
   protected dirtyI = new Uint8Array(0)
@@ -126,6 +127,12 @@ abstract class SurfaceBase extends Series3D {
     const ct = this.contour && !isEmptyLine(this.contour.line) ? this.contour : null
     if (!fillOn && !wireOn && !ct) return
     const gl = r.gl
+    if (this.texCtx !== gl) {
+      // New (or replacement) context: recreate textures and upload everything.
+      this.texH = null
+      this.texI = null
+      this.texCtx = gl
+    }
     if (this.anyDirtyH || !this.texH) {
       this.texH = this.uploadTex(gl, this.texH, this.hgt, this.dirtyH)
       this.anyDirtyH = false
@@ -223,7 +230,7 @@ abstract class SurfaceBase extends Series3D {
   }
 
   override disposeGL(r: GLRenderer | null) {
-    if (r) {
+    if (r && r.gl === this.texCtx) {
       if (this.texH) r.gl.deleteTexture(this.texH)
       if (this.texI) r.gl.deleteTexture(this.texI)
     }

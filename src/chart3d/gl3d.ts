@@ -161,8 +161,16 @@ export const lutOf = (f: Fill | null): LUT | null => (f instanceof PalettedFill 
 export class GLBuf {
   buf: WebGLBuffer | null = null
   bytes = 0
+  private ctx: WebGL2RenderingContext | null = null
+  /** True when the handle belongs to a different (lost) context and data must be re-uploaded. */
+  stale(gl: WebGL2RenderingContext) { return this.buf !== null && this.ctx !== gl }
   /** Ensure capacity in bytes (contents are lost on growth). Returns true when (re)allocated. */
   ensure(gl: WebGL2RenderingContext, bytes: number, target: number = gl.ARRAY_BUFFER): boolean {
+    if (this.ctx !== gl) {
+      this.buf = null
+      this.bytes = 0
+      this.ctx = gl
+    }
     if (!this.buf) this.buf = gl.createBuffer()!
     gl.bindBuffer(target, this.buf)
     if (bytes <= this.bytes) return false
@@ -171,7 +179,7 @@ export class GLBuf {
     return true
   }
   dispose(gl: WebGL2RenderingContext | null) {
-    if (gl && this.buf) gl.deleteBuffer(this.buf)
+    if (gl && this.buf && gl === this.ctx) gl.deleteBuffer(this.buf)
     this.buf = null
     this.bytes = 0
   }

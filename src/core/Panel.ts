@@ -196,6 +196,10 @@ export abstract class Panel extends Emitter implements Drawable {
   requestRender() { this.surface.requestRender() }
 
   setTitle(t: string) { this.title = t; this.requestRender(); return this }
+  private ariaText: string | null = null
+  /** Text alternative announced by screen readers (defaults to the title). */
+  setAccessibleLabel(text: string | null) { this.ariaText = text; this.requestRender(); return this }
+  accessibleLabel(): string { return this.ariaText ?? this.title }
   getTitle() { return this.title }
   setTitleFillStyle(f: Fill | ((prev: SolidFill) => Fill)) {
     this.titleColor = (typeof f === 'function' ? f(new SolidFill({ color: this.titleColor })) : f).getPrimaryColor()

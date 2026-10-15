@@ -47,7 +47,7 @@ export async function checkServer() {
  * Launch headless Chrome with the GPU enabled.
  * uncapped: disable vsync / frame-rate limit so rAF reports real headroom.
  */
-export async function launch({ width = 1600, height = 900, dpr = 1, uncapped = false } = {}) {
+export async function launch({ width = 1600, height = 900, dpr = 1, uncapped = false, extraArgs = [] } = {}) {
   const flags = [
     '--use-angle=d3d11',
     '--enable-gpu',
@@ -59,6 +59,7 @@ export async function launch({ width = 1600, height = 900, dpr = 1, uncapped = f
     `--window-size=${width},${height}`,
   ]
   if (uncapped) flags.push('--disable-gpu-vsync', '--disable-frame-rate-limit')
+  flags.push(...extraArgs)
   return puppeteer.launch({
     executablePath: chromePath(),
     headless: true,

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sferic fixture: GPU release</title>
+    <style>html, body { margin: 0; height: 100%; } #c { position: absolute; inset: 0; }</style>
+  </head>
+  <body>
+    <div id="c"></div>
+    <script type="module">
+      // Fixture for scripts/robustness.mjs (served by the dev server):
+      // create a chart, dispose it, and expose the renderer state for the test to poll.
+      import { sferic, debug } from '/src/index.ts'
+      window.__sfericDebug = debug
+      const make = () => {
+        const chart = sferic().ChartXY({ container: 'c' }).setTitle('Fixture')
+        chart.addLineSeries().appendJSON(Array.from({ length: 100 }, (_, x) => ({ x, y: Math.sin(x / 10) })))
+        return chart
+      }
+      let chart = make()
+      window.__fixture = {
+        dispose: () => { chart.dispose(); chart = null },
+        recreate: () => { chart = make() },
+      }
+    </script>
+  </body>
+</html>

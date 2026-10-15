@@ -1,4 +1,4 @@
-import { GLRenderer, existingRenderer, getRenderer } from './GLRenderer'
+import { GLRenderer, existingRenderer, getRenderer, releaseRenderer, setRendererLostHandler } from './GLRenderer'
 import { Rect, rectContains } from '../core/util'
 import type { GlowSettings } from '../core/theme'
 
@@ -36,6 +36,8 @@ export interface Drawable {
   glow(): GlowSettings | null
   /** Request multisampled rendering (needed for un-antialiased triangles: 3D, filled polygons). */
   wantsMSAA?(): boolean
+  /** Text alternative for assistive technology (chart title by default). */
+  accessibleLabel?(): string
   /**
    * Whether drawGL may change GL state behind the renderer's back (raw gl.* calls).
    * Defaults to true; the renderer's state shadow is then invalidated around it.
@@ -54,27 +56,100 @@ const surfaces = new Set<Surface>()
 
 /** Per-phase timings of the last rendered frame (ms), for profiling. */
 export const frameStats = { glPost: 0, layout: 0, background: 0, gl: 0, glFinish: 0, blit: 0, overlay: 0, total: 0, frames: 0 }
-;(globalThis as any).__sfericStats = frameStats
+
+/**
+ * Diagnostics (no globals are touched; tools opt in by importing this).
+ * syncGPU forces gl.finish() after each frame so timings include GPU work.
+ */
+export const debug = {
+  stats: frameStats,
+  syncGPU: false,
+  /** Current shared GPU context state. */
+  renderer: () => {
+    const r = existingRenderer()
+    return r ? { alive: true, ...r.memoryInfo() } : { alive: false }
+  },
+  /** Simulate a GPU context loss (testing). */
+  loseContext: () => existingRenderer()?.simulateLoss(),
+  /** Why WebGL2 could not be created, if it failed. */
+  glError: () => glFailure?.message ?? null,
+}
+
 let rafId = 0
+let glFailure: Error | null = null
+let glRetryAt = 0
+let warned = false
+let releaseTimer = 0
+/** Release the GPU context this long after the last chart is disposed. */
+const IDLE_RELEASE_MS = 3000
 
 function schedule() {
   if (!rafId) rafId = requestAnimationFrame(frame)
 }
 
+// A lost context is replaced on the next frame; every surface must redraw into it.
+// Registered lazily (first surface) so importing the module has no side effects.
+let lostHandlerSet = false
+function ensureLostHandler() {
+  if (lostHandlerSet) return
+  lostHandlerSet = true
+  setRendererLostHandler(() => {
+    for (const s of surfaces) s.requestRender()
+  })
+}
+
+/** The shared renderer, or null when WebGL2 is unavailable (retried every few seconds). */
+function acquireRenderer(): GLRenderer | null {
+  if (glFailure && performance.now() < glRetryAt) return null
+  try {
+    const r = getRenderer()
+    glFailure = null
+    return r
+  } catch (err) {
+    glFailure = err instanceof Error ? err : new Error(String(err))
+    glRetryAt = performance.now() + 5000
+    if (!warned) {
+      console.warn('sferic: WebGL2 unavailable; GPU-rendered content is disabled.', glFailure.message)
+      warned = true
+    }
+    return null
+  }
+}
+
 function frame(now: number) {
   rafId = 0
   let r: GLRenderer | null = null
+  let triedGL = false
+  let maxW = 0, maxH = 0, msaa = false
   for (const s of surfaces) {
     if (!s.needsFrame()) continue
-    if (!r && s.needsGL()) r = getRenderer()
+    if (!triedGL && s.needsGL()) {
+      triedGL = true
+      r = acquireRenderer()
+    }
     try {
-      s.render(r, now)
+      const used = s.render(r, now)
+      if (used) {
+        maxW = Math.max(maxW, used.w)
+        maxH = Math.max(maxH, used.h)
+        msaa ||= used.msaa
+      }
     } catch (err) {
       console.error('sferic: render failed', err)
       s.failed = true
     }
   }
+  // Let the renderer shrink render targets that stay far larger than needed.
+  if (r && maxW > 0) r.trim(maxW, maxH, msaa, now)
   for (const s of surfaces) if (s.needsFrame()) { schedule(); break }
+}
+
+/** Free the shared GPU context once no chart has existed for a while. */
+function scheduleIdleRelease() {
+  clearTimeout(releaseTimer)
+  releaseTimer = window.setTimeout(() => {
+    if (surfaces.size === 0) releaseRenderer()
+  }, IDLE_RELEASE_MS)
 }
 
 /**
@@ -108,6 +183,8 @@ export class Surface {
     this.canvas = document.createElement('canvas')
     this.canvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;display:block;outline:none;'
     this.canvas.tabIndex = 0
+    this.canvas.setAttribute('role', 'img')
+    this.canvas.setAttribute('aria-label', 'Chart')
     this.root.appendChild(this.canvas)
     container.appendChild(this.root)
     this.ctx = this.canvas.getContext('2d', { alpha: true })!
@@ -119,9 +196,13 @@ export class Surface {
     })
     this.io.observe(this.root)
     this.bindEvents()
+    ensureLostHandler()
     surfaces.add(this)
+    clearTimeout(releaseTimer)
     this.requestRender()
   }
+
+  private ariaLabel = 'Chart'
 
   add(d: Drawable) {
     this.drawables.push(d)
@@ -142,8 +223,10 @@ export class Surface {
   needsFrame() { return !this.disposed && !this.failed && this.visible && (this.dirty || this.animating) }
   needsGL() { return this.drawables.some((d) => d.hasGL()) }
 
-  render(r: GLRenderer | null, now: number) {
+  /** Renders one frame; returns the GL target size used (device px), if any. */
+  render(r: GLRenderer | null, now: number): { w: number; h: number; msaa: boolean } | null {
     const T0 = performance.now()
+    let used: { w: number; h: number; msaa: boolean } | null = null
     this.dirty = false
     const dpr = window.devicePixelRatio || 1
     const w = Math.max(1, this.root.clientWidth)
@@ -178,7 +261,9 @@ export class Surface {
     const gls = this.drawables.filter((d) => d.hasGL())
     if (gls.length && r) {
       const W = this.canvas.width, H = this.canvas.height
-      r.begin(W, H, dpr, gls.some((d) => d.wantsMSAA?.() ?? false))
+      const msaa = gls.some((d) => d.wantsMSAA?.() ?? false)
+      used = { w: W, h: H, msaa }
+      r.begin(W, H, dpr, msaa)
       let glow: GlowSettings | null = null
       // All uploads first: interleaving bufferSubData with draws stalls ANGLE's command stream.
       for (const d of gls) d.prepareGL?.(r)
@@ -197,7 +282,7 @@ export class Surface {
       r.end(glow)
       T3 = performance.now()
       frameStats.glPost += (T3 - Tm - frameStats.glPost) * 0.1
-      if ((globalThis as any).__sfericFinish) r.gl.finish()
+      if (debug.syncGPU) r.gl.finish()
       T4 = performance.now()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.drawImage(r.canvas, 0, 0, W, H, 0, 0, W, H)
@@ -208,6 +293,12 @@ export class Surface {
       ctx.save()
       d.drawOverlay(ctx)
       ctx.restore()
+    }
+    if (gls.length && !r) for (const d of gls) drawGLUnavailable(ctx, d.rect)
+    const label = this.drawables.map((d) => d.accessibleLabel?.() ?? '').filter(Boolean).join('; ') || 'Chart'
+    if (label !== this.ariaLabel) {
+      this.ariaLabel = label
+      this.canvas.setAttribute('aria-label', label)
     }
     const T6 = performance.now()
     const k = 0.1
@@ -221,6 +312,7 @@ export class Surface {
     fs.total += (T6 - T0 - fs.total) * k
     fs.frames++
     this.afterRender?.()
+    return used
   }
 
   // ---------------------------------------------------------------- events
@@ -330,5 +422,25 @@ export class Surface {
     for (const d of this.drawables) d.disposeGL(r)
     this.drawables = []
     this.root.remove()
+    if (surfaces.size === 0) scheduleIdleRelease()
   }
+}
+
+/** Notice drawn over GPU-rendered panels when WebGL2 cannot be created. */
+function drawGLUnavailable(ctx: CanvasRenderingContext2D, r: Rect) {
+  if (r.w < 40 || r.h < 30) return
+  const text = 'WebGL2 is unavailable: GPU-rendered content cannot be shown'
+  ctx.save()
+  ctx.font = '13px "Segoe UI", -apple-system, Arial, sans-serif'
+  const w = Math.min(r.w - 16, ctx.measureText(text).width + 24)
+  const x = r.x + (r.w - w) / 2, y = r.y + r.h / 2 - 16
+  ctx.fillStyle = 'rgba(20,20,24,0.85)'
+  ctx.fillRect(x, y, w, 32)
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 31)
+  ctx.fillStyle = '#f0f0f0'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, r.x + r.w / 2, y + 16, w - 12)
+  ctx.restore()
 }

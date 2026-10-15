@@ -121,6 +121,7 @@ export class MeshModel3D extends Series3D {
   drawGL(r: GLRenderer, f: Frame3D) {
     if (!this.idx.length || this.fill.type === 'empty') return
     const gl = r.gl
+    if (this.gPos.stale(gl)) this.dirty = { geom: true, val: true, col: true }
     if (this.dirty.geom) {
       this.gPos.ensure(gl, this.verts.byteLength)
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.verts)
@@ -314,6 +315,7 @@ export class BoxSeries3D extends Series3D {
   drawGL(r: GLRenderer, f: Frame3D) {
     if (!this.n || this.fill.type === 'empty') return
     const gl = r.gl
+    if (this.gCtr.stale(gl)) this.dirty = true
     if (this.dirty) {
       const up = (g: GLBuf, a: Float32Array | Uint32Array, comps: number) => {
         g.ensure(gl, this.cap * comps * 4)

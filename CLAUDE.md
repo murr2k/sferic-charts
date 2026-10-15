@@ -24,6 +24,9 @@ Headless verification (puppeteer-core driving the installed Chrome with the
 real GPU; the dev server must be running):
 
 ```powershell
+npm test                              # map decoder hostile-input tests (node:test)
+npm run test:browser                  # context loss, no-WebGL, GPU memory release, a11y
+npm run verify:package                # pack + clean install + ESM/CJS + types (bundler/node16/nodenext)
 npm run snap                          # every example -> .snapshots/<theme>/<id>.png; fails on page or WebGL errors
 npm run snap -- --theme light --filter rt-,xy-log
 npm run bench                         # frame-time table, vsync off (--vsync to cap)
@@ -38,7 +41,9 @@ dashboard ~9 ms/frame, 10M-point line zoom ~6 ms, 1M scatter pan ~1.6 ms.
 Visual check without a screenshot tool: in the gallery page (dev only),
 `await window.__snap('name')` POSTs the current chart canvas to the Vite
 middleware, which writes `.snapshots/name.png` (gitignored). View it with Read.
-`globalThis.__sfericStats` holds smoothed per-phase CPU frame timings (ms).
+The library touches no globals; diagnostics live in the exported `debug` object
+(`debug.stats`, `debug.syncGPU`, `debug.renderer()`, `debug.loseContext()`). In dev
+the gallery mirrors it as `window.__sfericStats` / `window.__sfericDebug` for the scripts.
 The gallery self-accepts HMR: edits re-run the current example in place
 instead of reloading the page.
 
@@ -119,6 +124,13 @@ colors/fonts from `this.theme` (never hard-code a palette). Use `Mutator<T>`
   them; never mix raw `gl.uniform*` and cached setters for one uniform.
 - `npm run snap` treats WebGL console warnings as errors; keep it that way,
   since dropped draws raise no exception.
+- Every object holding GPU handles must remember the `gl` context that created
+  them and, when handed a different one, drop the handles and re-upload from its
+  CPU copy (see `XYStore.bindCtx`, `GLBuf.stale`). **Why:** after a context loss
+  the renderer is replaced; stale handles make charts silently blank. Never delete
+  handles that belong to another context. `npm run test:browser` covers this.
+- Untrusted input parsers (map geometry) validate structure and bound size and
+  nesting; failures throw `sferic: invalid map geometry: ...`.
 - No third-party product names in shipped code, package metadata or the API
   (no `lightningChart` export, no copied example titles or data, own theme names
   and palettes). **Why:** avoid trademark or copyright complaints; the README's

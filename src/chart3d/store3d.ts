@@ -240,6 +240,7 @@ export class Store3D {
   /** Upload changed slots. */
   sync(gl: WebGL2RenderingContext) {
     const n1 = this.cap + 1
+    if (this.gPos.stale(gl)) this.gpuCap = -1 // context replaced: re-upload everything
     const full = this.gpuCap !== this.cap
     if (full) {
       this.gpuCap = this.cap

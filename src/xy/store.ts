@@ -69,6 +69,16 @@ export class Chunk {
   tailBase = 0
   tailN = 0
   private tailView: GpuBufs = {}
+  /** Forget all GPU handles (they belong to a lost context); data is re-uploaded on next sync. */
+  resetGPU() {
+    this.gpu = {}
+    this.tailGpu = {}
+    this.tailView = {}
+    this.tailN = 0
+    this.uploaded = 0
+    this.dirtyFrom = Infinity
+    for (const d of this.lods) if (d) { d.gpu = null; d.uploaded = 0 }
+  }
   tailBufs(): GpuBufs {
     for (const k of Object.keys(this.tailGpu) as ('xy' | Channel)[]) {
       const b = this.tailGpu[k]!
@@ -195,6 +205,20 @@ export class XYStore {
   /** Chunks released since the last GPU sync; buffers are deleted then. */
   private released: Chunk[] = []
   private deadBuffers: WebGLBuffer[] = []
+  /** Context that owns this store's GPU handles. */
+  private ctx: WebGL2RenderingContext | null = null
+
+  /** Adopt the renderer's context; after a context loss, drop stale handles. */
+  private bindCtx(r: GLRenderer) {
+    if (this.ctx === r.gl) return
+    if (this.ctx) {
+      for (const ch of this.chunks) ch.resetGPU()
+      for (const ch of this.released) ch.resetGPU()
+      this.released.length = 0
+      this.deadBuffers.length = 0
+    }
+    this.ctx = r.gl
+  }
 
   enableChannel(c: Channel) {
     if (this.channels.has(c)) return
@@ -560,6 +584,7 @@ export class XYStore {
   // that is re-specified each frame.
 
   private gc(r: GLRenderer) {
+    this.bindCtx(r)
     const gl = r.gl
     for (const c of this.released) this.free(r, c)
     this.released.length = 0
@@ -607,6 +632,7 @@ export class XYStore {
 
   /** Make every chunk drawable (called once per frame before any draw). */
   syncAll(r: GLRenderer) {
+    this.bindCtx(r)
     for (const ch of this.chunks) if (ch.uploaded < ch.n || ch.dirtyFrom < ch.n || !ch.gpu.xy) this.sync(r, ch)
   }
 
@@ -628,6 +654,7 @@ export class XYStore {
 
   /** Upload LOD buckets: whole-buffer respecification, at most every LOD_COMMIT buckets. */
   syncLod(r: GLRenderer, d: Lod) {
+    this.bindCtx(r)
     const gl = r.gl
     if (d.gpu && d.nb - d.uploaded < LOD_COMMIT) return
     if (d.uploaded === d.nb && d.gpu) return
@@ -661,6 +688,7 @@ export class XYStore {
   }
 
   free(r: GLRenderer, ch: Chunk) {
+    if (this.ctx !== r.gl) return ch.resetGPU()
     for (const k of Object.keys(ch.gpu) as ('xy' | Channel)[]) {
       const g = ch.gpu[k]
       if (g) r.gl.deleteBuffer(g.buf)

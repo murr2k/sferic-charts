@@ -170,9 +170,15 @@ npm run dev              # gallery at http://127.0.0.1:8779 (run.cmd on Windows)
 npm run typecheck
 npm run build:lib        # library bundle and type declarations
 npm run build            # static gallery build
+npm test                 # map decoder hostile-input tests
 npm run snap             # screenshot every example headlessly; fails on page or WebGL errors
+npm run test:browser     # context loss, no-WebGL, GPU memory and accessibility checks
 npm run bench            # frame-time benchmarks
+npm run verify:package   # pack, install into a clean project, check imports and types
 ```
+
+`prepublishOnly` runs typecheck, tests, the library build and `verify:package`, so a
+broken or stale build cannot be published.
 
 `snap` and `bench` drive your installed Chrome or Edge through puppeteer-core and need
 the dev server running. Gallery examples live in `gallery/examples/`, one file each,

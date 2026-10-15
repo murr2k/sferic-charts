@@ -30,13 +30,50 @@ export interface Topology {
 export const isTopology = (o: unknown): o is Topology =>
   !!o && typeof o === 'object' && (o as { type?: string }).type === 'Topology' && Array.isArray((o as Topology).arcs)
 
+// ---------------------------------------------------------------- validation
+// Geometry may come from untrusted sources, so malformed input fails with a clear
+// error instead of a TypeError deep inside decoding, and nesting / size are bounded.
+
+/** Maximum GeometryCollection nesting depth. */
+const MAX_DEPTH = 64
+/** Maximum number of decoded positions (guards against memory exhaustion). */
+const MAX_POINTS = 20_000_000
+
+const fail = (msg: string): never => {
+  throw new Error(`sferic: invalid map geometry: ${msg}`)
+}
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isPair = (v: unknown): v is [number, number] => Array.isArray(v) && v.length >= 2 && isNum(v[0]) && isNum(v[1])
+
+/** Depth-first walk over a geometry tree without recursion. */
+function walk<T extends { type?: string; geometries?: unknown }>(root: T, leaf: (g: T) => void) {
+  const stack: [T, number][] = [[root, 0]]
+  while (stack.length) {
+    const [g, depth] = stack.pop()!
+    if (!g || typeof g !== 'object') fail('geometry is not an object')
+    if (g.type === 'GeometryCollection') {
+      if (depth >= MAX_DEPTH) fail(`GeometryCollection nested deeper than ${MAX_DEPTH}`)
+      const kids: unknown = g.geometries ?? []
+      if (!Array.isArray(kids)) fail('GeometryCollection.geometries is not an array')
+      const list = kids as unknown[]
+      for (let i = list.length - 1; i >= 0; i--) stack.push([list[i] as T, depth + 1])
+    } else leaf(g)
+  }
+}
+
 /** Decode all arcs to absolute positions. */
 export function decodeArcs(topo: Topology): Position[][] {
   const t = topo.transform
-  return topo.arcs.map((arc) => {
-    if (!t) return arc.map((p) => [p[0], p[1]] as Position)
+  if (t !== undefined && !(t && isPair(t.scale) && isPair(t.translate))) fail('transform needs numeric scale and translate pairs')
+  let total = 0
+  return topo.arcs.map((arc, ai) => {
+    if (!Array.isArray(arc)) fail(`arc ${ai} is not an array`)
+    total += arc.length
+    if (total > MAX_POINTS) fail(`more than ${MAX_POINTS} arc points`)
     let x = 0, y = 0
-    return arc.map((p) => {
+    return arc.map((p, pi) => {
+      if (!isPair(p)) fail(`arc ${ai} point ${pi} is not a numeric pair`)
+      if (!t) return [p[0], p[1]] as Position
       x += p[0]
       y += p[1]
       return [x * t.scale[0] + t.translate[0], y * t.scale[1] + t.translate[1]] as Position
@@ -44,19 +81,34 @@ export function decodeArcs(topo: Topology): Position[][] {
   })
 }
 
-/** Stitch arc references (negative = reversed, ~i) into one ring. */
-function ringFromArcs(ids: number[], arcs: Position[][]): Ring {
+/** Resolve an arc reference (negative = reversed, ~i), bounds-checked. */
+function arcIndex(i: unknown, n: number): number {
+  if (!Number.isInteger(i)) fail(`arc reference ${String(i)} is not an integer`)
+  const k = (i as number) < 0 ? ~(i as number) : (i as number)
+  if (k >= n) fail(`arc reference ${String(i)} is out of range (${n} arcs)`)
+  return k
+}
+
+/** Stitch arc references into one ring. */
+function ringFromArcs(ids: unknown, arcs: Position[][]): Ring {
+  if (!Array.isArray(ids)) fail('ring is not an array of arc references')
   const out: Ring = []
-  for (const i of ids) {
-    const a = i < 0 ? arcs[~i].slice().reverse() : arcs[i]
-    if (!a) continue
-    for (let k = out.length ? 1 : 0; k < a.length; k++) out.push(a[k])
+  for (const i of ids as unknown[]) {
+    const k = arcIndex(i, arcs.length)
+    const a = (i as number) < 0 ? arcs[k].slice().reverse() : arcs[k]
+    for (let j = out.length ? 1 : 0; j < a.length; j++) out.push(a[j])
   }
   return out
 }
 
+const polygonArcs = (o: TopoGeometry): unknown[][] => {
+  if (!Array.isArray(o.arcs)) fail(`${o.type} has no arcs array`)
+  return o.type === 'Polygon' ? [o.arcs as unknown[]] : (o.arcs as unknown[][])
+}
+
 /** Pick the object to decode: the named one, 'countries' if present, else the first. */
 export function topologyObjectName(topo: Topology, name?: string): string {
+  if (!topo.objects || typeof topo.objects !== 'object') fail('topology has no objects')
   if (name && topo.objects[name]) return name
   if (topo.objects.countries) return 'countries'
   return Object.keys(topo.objects)[0]
@@ -67,17 +119,16 @@ export function topologyToFeatures(topo: Topology, name?: string): GeoFeature[] 
   const arcs = decodeArcs(topo)
   const obj = topo.objects[topologyObjectName(topo, name)]
   const out: GeoFeature[] = []
-  const visit = (o: TopoGeometry) => {
-    if (o.type === 'GeometryCollection') {
-      for (const g of o.geometries ?? []) visit(g)
-      return
-    }
-    let polys: Ring[][] | null = null
-    if (o.type === 'Polygon') polys = [(o.arcs as number[][]).map((r) => ringFromArcs(r, arcs))]
-    else if (o.type === 'MultiPolygon') polys = (o.arcs as number[][][]).map((p) => p.map((r) => ringFromArcs(r, arcs)))
-    if (polys) out.push({ id: o.id, properties: o.properties ?? {}, polygons: polys.filter((p) => p.length && p[0].length >= 3) })
-  }
-  if (obj) visit(obj)
+  if (!obj) return out
+  walk(obj, (o) => {
+    if (o.type !== 'Polygon' && o.type !== 'MultiPolygon') return
+    const polys = polygonArcs(o).map((p) => {
+      if (!Array.isArray(p)) fail('polygon is not an array of rings')
+      return (p as unknown[]).map((r) => ringFromArcs(r, arcs))
+    })
+    const props = o.properties && typeof o.properties === 'object' ? o.properties : {}
+    out.push({ id: o.id, properties: props, polygons: polys.filter((p) => p.length && p[0].length >= 3) })
+  })
   return out
 }
 
@@ -86,17 +137,18 @@ export function topologyMesh(topo: Topology, name?: string): Position[][] {
   const arcs = decodeArcs(topo)
   const obj = topo.objects[topologyObjectName(topo, name)]
   const used = new Set<number>()
-  const visit = (o: TopoGeometry) => {
-    if (o.type === 'GeometryCollection') {
-      for (const g of o.geometries ?? []) visit(g)
-      return
+  if (!obj) return []
+  walk(obj, (o) => {
+    if (o.type !== 'Polygon' && o.type !== 'MultiPolygon') return
+    for (const p of polygonArcs(o)) {
+      if (!Array.isArray(p)) fail('polygon is not an array of rings')
+      for (const r of p as unknown[]) {
+        if (!Array.isArray(r)) fail('ring is not an array of arc references')
+        for (const i of r as unknown[]) used.add(arcIndex(i, arcs.length))
+      }
     }
-    const add = (r: number[]) => r.forEach((i) => used.add(i < 0 ? ~i : i))
-    if (o.type === 'Polygon') (o.arcs as number[][]).forEach(add)
-    else if (o.type === 'MultiPolygon') (o.arcs as number[][][]).forEach((p) => p.forEach(add))
-  }
-  if (obj) visit(obj)
-  return [...used].sort((a, b) => a - b).map((i) => arcs[i]).filter(Boolean)
+  })
+  return [...used].sort((a, b) => a - b).map((i) => arcs[i])
 }
 
 // ---------------------------------------------------------------- antimeridian
@@ -185,24 +237,54 @@ export function splitLineAtAntimeridian(line: Position[]): Position[][] {
 interface GeoJSONGeometry { type: string; coordinates?: unknown; geometries?: GeoJSONGeometry[] }
 interface GeoJSONFeature { type: 'Feature'; id?: string | number; properties?: Record<string, unknown> | null; geometry: GeoJSONGeometry | null }
 
+/** Validate a GeoJSON ring: an array of numeric positions. */
+function ringOf(r: unknown, budget: { n: number }): Ring {
+  if (!Array.isArray(r)) fail('GeoJSON ring is not an array')
+  budget.n += (r as unknown[]).length
+  if (budget.n > MAX_POINTS) fail(`more than ${MAX_POINTS} coordinates`)
+  return (r as unknown[]).map((p, i) => {
+    if (!isPair(p)) fail(`GeoJSON position ${i} is not a numeric pair`)
+    return [(p as number[])[0], (p as number[])[1]] as Position
+  })
+}
+
 /** Decode GeoJSON (FeatureCollection, Feature or bare geometry) to features. */
 export function geojsonToFeatures(gj: unknown): GeoFeature[] {
   const out: GeoFeature[] = []
+  const budget = { n: 0 }
   const polysOf = (g: GeoJSONGeometry | null): Ring[][] => {
     if (!g) return []
-    if (g.type === 'Polygon') return [g.coordinates as Ring[]]
-    if (g.type === 'MultiPolygon') return g.coordinates as Ring[][]
-    if (g.type === 'GeometryCollection') return (g.geometries ?? []).flatMap(polysOf)
-    return []
+    const polys: Ring[][] = []
+    walk(g, (leaf) => {
+      const c = leaf.coordinates
+      if (leaf.type === 'Polygon') {
+        if (!Array.isArray(c)) fail('Polygon coordinates are not an array')
+        polys.push((c as unknown[]).map((r) => ringOf(r, budget)))
+      } else if (leaf.type === 'MultiPolygon') {
+        if (!Array.isArray(c)) fail('MultiPolygon coordinates are not an array')
+        for (const p of c as unknown[]) {
+          if (!Array.isArray(p)) fail('MultiPolygon member is not an array of rings')
+          polys.push((p as unknown[]).map((r) => ringOf(r, budget)))
+        }
+      }
+    })
+    return polys
   }
-  const o = gj as { type?: string; features?: GeoJSONFeature[] }
+  const props = (p: unknown) => (p && typeof p === 'object' ? (p as Record<string, unknown>) : {})
+  const o = gj as { type?: string; features?: unknown }
   if (o?.type === 'FeatureCollection') {
-    for (const f of o.features ?? []) out.push({ id: f.id, properties: f.properties ?? {}, polygons: polysOf(f.geometry) })
+    if (!Array.isArray(o.features)) fail('FeatureCollection.features is not an array')
+    for (const f of o.features as GeoJSONFeature[]) {
+      if (!f || typeof f !== 'object') fail('feature is not an object')
+      out.push({ id: f.id, properties: props(f.properties), polygons: polysOf(f.geometry) })
+    }
   } else if (o?.type === 'Feature') {
     const f = gj as GeoJSONFeature
-    out.push({ id: f.id, properties: f.properties ?? {}, polygons: polysOf(f.geometry) })
+    out.push({ id: f.id, properties: props(f.properties), polygons: polysOf(f.geometry) })
   } else if (o?.type) {
     out.push({ properties: {}, polygons: polysOf(gj as GeoJSONGeometry) })
+  } else {
+    fail('input is neither TopoJSON nor GeoJSON')
   }
   return out.filter((f) => f.polygons.length)
 }
