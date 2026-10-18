@@ -39,6 +39,7 @@ jobs:
       - name: Publish
         if: github.ref_type == 'tag'
         run: npm publish
+      # npm publish --dry-run refuses versions already on the registry, so pack instead.
       - name: Dry run
         if: github.ref_type != 'tag'
-        run: npm run prepublishOnly && npm publish --dry-run --ignore-scripts
+        run: npm run prepublishOnly && npm pack --dry-run
