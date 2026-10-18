@@ -5,6 +5,9 @@ import { GLRenderer } from '../render/GLRenderer'
  *
  * - Each chunk stores coordinates relative to its own origin (first point) as
  *   float32, so large absolute values (epoch-ms timestamps) keep precision on GPU.
+ *   X is stored as a high word plus, once a chunk needs one, a low word (`xl`):
+ *   float32 alone rounds to 2^-25 of the chunk's span, which deep zoom on sparse
+ *   data (an hour of fractional epoch-ms in one chunk) shows as ~100 px errors.
  * - Chunks after the first begin with a copy of the previous chunk's last point
  *   ("bridge") so that line strips stay continuous across chunk boundaries.
  * - Per-block (BLOCK points) bounds give cheap range min/max for fitting,
@@ -41,7 +44,9 @@ const TAIL_MAX = 2048
 /** LOD buckets accumulated before the LOD buffer is re-specified. */
 const LOD_COMMIT = 16
 
-export type GpuBufs = Partial<Record<'xy' | Channel, { buf: WebGLBuffer }>>
+/** GPU buffer names of a chunk: coordinates, x low word, optional channels. */
+type BufKey = 'xy' | 'xl' | Channel
+export type GpuBufs = Partial<Record<BufKey, { buf: WebGLBuffer }>>
 /** A drawable slice of a chunk: vertex `start` (in that buffer set) and `count`. */
 export interface GpuPart { gpu: GpuBufs; start: number; count: number; at: number }
 
@@ -52,6 +57,10 @@ export class Chunk {
   ox = 0
   oy = 0
   xy: Float32Array
+  /** Low word of x: x - ox - xy[2i], allocated on the first point that needs it. */
+  xl?: Float32Array
+  /** Largest |x - ox| stored: bounds the high word's rounding error at 2^-24 of it. */
+  xmag = 0
   color?: Uint32Array
   value?: Float32Array
   size?: Float32Array
@@ -60,12 +69,12 @@ export class Chunk {
   /** Per block: xmin, xmax, ymin, ymax (absolute). Bridge point excluded. */
   blocks: Float64Array
   /** GPU state */
-  gpu: Partial<Record<'xy' | Channel, GPUBuf>> = {}
+  gpu: Partial<Record<BufKey, GPUBuf>> = {}
   uploaded = 0
   dirtyFrom = Infinity
   lods: (Lod | undefined)[] = []
   /** Tail (uncommitted samples) buffers: storage index tailBase.. tailN. */
-  tailGpu: Partial<Record<'xy' | Channel, WebGLBuffer>> = {}
+  tailGpu: Partial<Record<BufKey, WebGLBuffer>> = {}
   tailBase = 0
   tailN = 0
   private tailView: GpuBufs = {}
@@ -80,7 +89,7 @@ export class Chunk {
     for (const d of this.lods) if (d) { d.gpu = null; d.uploaded = 0 }
   }
   tailBufs(): GpuBufs {
-    for (const k of Object.keys(this.tailGpu) as ('xy' | Channel)[]) {
+    for (const k of Object.keys(this.tailGpu) as BufKey[]) {
       const b = this.tailGpu[k]!
       if (this.tailView[k]?.buf !== b) this.tailView[k] = { buf: b }
     }
@@ -100,6 +109,10 @@ export class Chunk {
     ;(this as any)[c] = arr
     this.dirtyFrom = 0
   }
+  allocXl() {
+    this.xl = new Float32Array(this.cap)
+    this.dirtyFrom = 0
+  }
   grow(newCap: number) {
     const g = <T extends Float32Array | Uint32Array>(a: T | undefined, k = 1): T | undefined => {
       if (!a) return a
@@ -108,6 +121,7 @@ export class Chunk {
       return b
     }
     this.xy = g(this.xy, 2)!
+    this.xl = g(this.xl)
     this.color = g(this.color)
     if (this.color) this.color.fill(0xffffffff, this.cap)
     this.value = g(this.value)
@@ -186,7 +200,9 @@ export class Chunk {
     d.nb = total
     return d
   }
-  x(i: number): number { return this.xy[i * 2] + this.ox }
+  /** Chunk-relative x in float64 (high + low word). */
+  rx(i: number): number { return this.xl ? this.xy[i * 2] + this.xl[i] : this.xy[i * 2] }
+  x(i: number): number { return this.rx(i) + this.ox }
   y(i: number): number { return this.xy[i * 2 + 1] + this.oy }
 }
 
@@ -270,7 +286,12 @@ export class XYStore {
         ch.ox = Number.isFinite(x) ? x : 0
         ch.oy = Number.isFinite(y) ? y : 0
       }
-      ch.xy[j * 2] = x - ch.ox
+      const rx = x - ch.ox
+      ch.xy[j * 2] = rx
+      const xl = rx - ch.xy[j * 2]
+      if (xl !== 0 && !ch.xl && Number.isFinite(xl)) ch.allocXl()
+      if (ch.xl) ch.xl[j] = Number.isFinite(xl) ? xl : 0
+      if (Math.abs(rx) > ch.xmag) ch.xmag = Math.abs(rx)
       ch.xy[j * 2 + 1] = y - ch.oy
       if (extra) {
         if (ch.color) ch.color[j] = extra.color ? extra.color(i) >>> 0 : 0xffffffff
@@ -374,6 +395,7 @@ export class XYStore {
           // keep a single empty chunk alive; reset it
           ch.n = 0
           ch.bridged = false
+          ch.xmag = 0
           ch.uploaded = 0
           ch.blocks.fill(NaN)
           this.trim = 0
@@ -507,10 +529,9 @@ export class XYStore {
   /** First storage index in [lo, hi) with x >= v (monotonic X only). */
   lower(ch: Chunk, lo: number, hi: number, v: number): number {
     const rel = v - ch.ox
-    const xy = ch.xy
     while (lo < hi) {
       const m = (lo + hi) >>> 1
-      if (xy[m * 2] < rel) lo = m + 1
+      if (ch.rx(m) < rel) lo = m + 1
       else hi = m
     }
     return lo
@@ -519,10 +540,9 @@ export class XYStore {
   /** First storage index in [lo, hi) with x > v (monotonic X only). */
   upper(ch: Chunk, lo: number, hi: number, v: number): number {
     const rel = v - ch.ox
-    const xy = ch.xy
     while (lo < hi) {
       const m = (lo + hi) >>> 1
-      if (xy[m * 2] <= rel) lo = m + 1
+      if (ch.rx(m) <= rel) lo = m + 1
       else hi = m
     }
     return lo
@@ -599,8 +619,8 @@ export class XYStore {
     const last = ch === this.chunks[this.chunks.length - 1]
     const pending = ch.n - ch.uploaded
     const commit = !ch.gpu.xy || ch.dirtyFrom < ch.n || (pending > 0 && (!last || pending > TAIL_MAX || ch.n === ch.cap))
-    const chans: ['xy' | Channel, Float32Array | Uint32Array | undefined, number][] = [
-      ['xy', ch.xy, 2], ['color', ch.color, 1], ['value', ch.value, 1], ['size', ch.size, 1], ['lo', ch.lo, 1], ['rot', ch.rot, 1],
+    const chans: [BufKey, Float32Array | Uint32Array | undefined, number][] = [
+      ['xy', ch.xy, 2], ['xl', ch.xl, 1], ['color', ch.color, 1], ['value', ch.value, 1], ['size', ch.size, 1], ['lo', ch.lo, 1], ['rot', ch.rot, 1],
     ]
     if (commit) {
       for (const [key, arr, comps] of chans) {
@@ -689,12 +709,12 @@ export class XYStore {
 
   free(r: GLRenderer, ch: Chunk) {
     if (this.ctx !== r.gl) return ch.resetGPU()
-    for (const k of Object.keys(ch.gpu) as ('xy' | Channel)[]) {
+    for (const k of Object.keys(ch.gpu) as BufKey[]) {
       const g = ch.gpu[k]
       if (g) r.gl.deleteBuffer(g.buf)
     }
     for (const d of ch.lods) if (d?.gpu) r.gl.deleteBuffer(d.gpu.buf)
-    for (const k of Object.keys(ch.tailGpu) as ('xy' | Channel)[]) r.gl.deleteBuffer(ch.tailGpu[k]!)
+    for (const k of Object.keys(ch.tailGpu) as BufKey[]) r.gl.deleteBuffer(ch.tailGpu[k]!)
     ch.tailGpu = {}
     ch.tailN = 0
     ch.lods = []

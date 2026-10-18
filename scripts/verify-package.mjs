@@ -5,6 +5,7 @@ import { execSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { FORBIDDEN } from './forbidden.mjs'
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 const TSC = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
@@ -35,11 +36,6 @@ try {
 
   // 2. Forbidden content in what ships
   check('no forbidden strings in dist', () => {
-    const bad = [
-      [/lightningchart|\bLCJS\b|arction/i, 'third-party product name'],
-      [/globalThis\.__sferic|window\.__sferic/, 'debug global'],
-      [/[A-Za-z]:[\\/]+Users[\\/]/, 'local absolute path'],
-    ]
     const hits = []
     const walk = (d) => {
       for (const f of readdirSync(d)) {
@@ -47,7 +43,7 @@ try {
         if (statSync(p).isDirectory()) walk(p)
         else {
           const s = readFileSync(p, 'utf8')
-          for (const [re, what] of bad) if (re.test(s)) hits.push(`${p.slice(ROOT.length + 1)}: ${what}`)
+          for (const [re, what] of FORBIDDEN) if (re.test(s)) hits.push(`${p.slice(ROOT.length + 1)}: ${what}`)
         }
       }
     }
@@ -70,9 +66,10 @@ try {
   check('ESM import in Node', () => run(`node -e "import('sferic-charts').then(m => { if (typeof m.sferic !== 'function') process.exit(2); if ('lightningChart' in m) process.exit(3) })"`, app))
   check('CommonJS require in Node', () => run(`node -e "const m = require('sferic-charts'); if (typeof m.sferic !== 'function') process.exit(2)"`, app))
 
-  // 5. Type resolution as a consumer, strict, without skipLibCheck
-  writeFileSync(
-    join(app, 'app.ts'),
+  // 5. Type resolution as a consumer, strict, without skipLibCheck. app.ts is an ES
+  // module (the consumer package is "type": "module"); app.cts is CommonJS, whose
+  // imports resolve through the "require" condition and need CommonJS declarations.
+  const consumer =
     `import { sferic, Themes, AxisTickStrategies, LUT, PalettedFill, regularColorSteps } from 'sferic-charts'
 const c = sferic().ChartXY({ container: 'x', theme: Themes.storm })
 c.axisX.setTickStrategy(AxisTickStrategies.DateTime)
@@ -80,13 +77,15 @@ c.addLineSeries().appendJSON([{ x: 1, y: 2 }])
 const lut = new LUT({ steps: regularColorSteps(0, 1, Themes.storm.examples.intensityColorPalette) })
 c.addHeatmapGridSeries({ columns: 2, rows: 2 }).setFillStyle(new PalettedFill({ lut }))
 sferic().Chart3D({ container: 'y' }).addPointSeries().appendJSON([{ x: 1, y: 2, z: 3 }])
-`,
-  )
+`
+  writeFileSync(join(app, 'app.ts'), consumer)
+  writeFileSync(join(app, 'app.cts'), consumer)
+  const tsc = (mod, res, file) =>
+    run(`node "${TSC}" --noEmit --strict --skipLibCheck false --target es2022 --lib es2022,dom --module ${mod} --moduleResolution ${res} ${file}`, app)
   for (const [mod, res] of [['esnext', 'bundler'], ['node16', 'node16'], ['nodenext', 'nodenext']]) {
-    check(`types: moduleResolution ${res}`, () =>
-      run(`node "${TSC}" --noEmit --strict --skipLibCheck false --target es2022 --lib es2022,dom --module ${mod} --moduleResolution ${res} app.ts`, app),
-    )
+    check(`types: moduleResolution ${res}`, () => tsc(mod, res, 'app.ts'))
   }
+  for (const res of ['node16', 'nodenext']) check(`types: CommonJS consumer, moduleResolution ${res}`, () => tsc(res, res, 'app.cts'))
 } catch (e) {
   results.push({ name: 'setup', ok: false, detail: String(e.message ?? e).split('\n')[0] })
 } finally {

@@ -60,6 +60,8 @@ export async function launch({ width = 1600, height = 900, dpr = 1, uncapped = f
   ]
   if (uncapped) flags.push('--disable-gpu-vsync', '--disable-frame-rate-limit')
   flags.push(...extraArgs)
+  // Extra Chrome flags for any script, e.g. SFERIC_CHROME_ARGS="--disable-webgl --disable-webgl2"
+  flags.push(...(process.env.SFERIC_CHROME_ARGS ?? '').split(/\s+/).filter(Boolean))
   return puppeteer.launch({
     executablePath: chromePath(),
     headless: true,
@@ -67,6 +69,19 @@ export async function launch({ width = 1600, height = 900, dpr = 1, uncapped = f
     defaultViewport: { width, height, deviceScaleFactor: dpr },
     protocolTimeout: 240_000,
   })
+}
+
+const CANARY = 'WebGL: INVALID_OPERATION: sferic harness canary'
+
+/**
+ * Fail fast unless the console hook records a planted WebGL warning. Puppeteer once
+ * renamed the warning type ('warning' -> 'warn') and every WebGL warning went unseen.
+ */
+async function assertSeesWarnings(page) {
+  await page.evaluate((t) => console.warn(t), CANARY)
+  for (let i = 0; i < 100 && !page.__errors.includes(CANARY); i++) await new Promise((r) => setTimeout(r, 10))
+  if (!page.__errors.includes(CANARY)) throw new Error('harness: the console hook did not record a planted WebGL warning')
+  page.__errors.length = 0
 }
 
 /** Open the gallery with a theme preset; collects page errors into page.__errors. */
@@ -82,12 +97,15 @@ export async function openGallery(browser, theme = 'storm') {
   page.on('pageerror', (e) => page.__errors.push(String(e?.message ?? e)))
   page.on('console', (m) => {
     // WebGL validation failures (feedback loops, invalid ops) only show up as warnings.
-    const gl = m.type() === 'warning' && /WebGL|GL_INVALID|GL ERROR/i.test(m.text())
+    // Puppeteer reports them as 'warn' ('warning' in older versions).
+    const warn = m.type() === 'warn' || m.type() === 'warning'
+    const gl = warn && /WebGL|GL_INVALID|GL ERROR/i.test(m.text())
     if (m.type() !== 'error' && !gl) return
     if (/favicon\.ico$/.test(m.location()?.url ?? '')) return
     page.__errors.push(m.text())
   })
   await page.goto(`${BASE}/#/`, { waitUntil: 'load' })
+  await assertSeesWarnings(page)
   return page
 }
 

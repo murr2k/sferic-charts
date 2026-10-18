@@ -54,12 +54,16 @@ export interface Drawable {
 
 const surfaces = new Set<Surface>()
 
-/** Per-phase timings of the last rendered frame (ms), for profiling. */
-export const frameStats = { glPost: 0, layout: 0, background: 0, gl: 0, glFinish: 0, blit: 0, overlay: 0, total: 0, frames: 0 }
+/**
+ * Per-phase render timings (ms), exponential moving averages over recent surface
+ * renders, for profiling. Zeroing `frames` restarts them from the next sample.
+ */
+export const frameStats = { glPost: 0, layout: 0, background: 0, gl: 0, gpuSync: 0, blit: 0, overlay: 0, total: 0, frames: 0 }
 
 /**
  * Diagnostics (no globals are touched; tools opt in by importing this).
- * syncGPU forces gl.finish() after each frame so timings include GPU work.
+ * syncGPU waits for the GPU after each surface render (a 1-pixel readback; gl.finish()
+ * returns immediately in Chrome), so timings include GPU work.
  */
 export const debug = {
   stats: frameStats,
@@ -73,6 +77,12 @@ export const debug = {
   loseContext: () => existingRenderer()?.simulateLoss(),
   /** Why WebGL2 could not be created, if it failed. */
   glError: () => glFailure?.message ?? null,
+  /**
+   * Called after each animation frame that rendered, with its wall time (ms) and the
+   * number of surfaces drawn. With syncGPU set the time includes GPU completion, so
+   * it is the cost of a render rather than the frame pacing.
+   */
+  onFrame: null as ((ms: number, surfaces: number) => void) | null,
 }
 
 let rafId = 0
@@ -118,6 +128,8 @@ function acquireRenderer(): GLRenderer | null {
 
 function frame(now: number) {
   rafId = 0
+  const t0 = performance.now()
+  let rendered = 0
   let r: GLRenderer | null = null
   let triedGL = false
   let maxW = 0, maxH = 0, msaa = false
@@ -129,6 +141,7 @@ function frame(now: number) {
     }
     try {
       const used = s.render(r, now)
+      rendered++
       if (used) {
         maxW = Math.max(maxW, used.w)
         maxH = Math.max(maxH, used.h)
@@ -141,6 +154,7 @@ function frame(now: number) {
   }
   // Let the renderer shrink render targets that stay far larger than needed.
   if (r && maxW > 0) r.trim(maxW, maxH, msaa, now)
+  if (rendered && debug.onFrame) debug.onFrame(performance.now() - t0, rendered)
   for (const s of surfaces) if (s.needsFrame()) { schedule(); break }
 }
 
@@ -281,8 +295,8 @@ export class Surface {
       const Tm = performance.now()
       r.end(glow)
       T3 = performance.now()
-      frameStats.glPost += (T3 - Tm - frameStats.glPost) * 0.1
-      if (debug.syncGPU) r.gl.finish()
+      frameStats.glPost += (T3 - Tm - frameStats.glPost) * (frameStats.frames ? 0.1 : 1)
+      if (debug.syncGPU) r.syncGPU()
       T4 = performance.now()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.drawImage(r.canvas, 0, 0, W, H, 0, 0, W, H)
@@ -301,12 +315,13 @@ export class Surface {
       this.canvas.setAttribute('aria-label', label)
     }
     const T6 = performance.now()
-    const k = 0.1
+    // Moving averages; the first render after a reset seeds them instead of decaying from 0.
     const fs = frameStats
+    const k = fs.frames ? 0.1 : 1
     fs.layout += (T1 - T0 - fs.layout) * k
     fs.background += (T2 - T1 - fs.background) * k
     fs.gl += (T3 - T2 - fs.gl) * k
-    fs.glFinish += (T4 - T3 - fs.glFinish) * k
+    fs.gpuSync += (T4 - T3 - fs.gpuSync) * k
     fs.blit += (T5 - T4 - fs.blit) * k
     fs.overlay += (T6 - T5 - fs.overlay) * k
     fs.total += (T6 - T0 - fs.total) * k

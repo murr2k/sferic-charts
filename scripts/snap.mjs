@@ -15,7 +15,15 @@ mkdirSync(outDir, { recursive: true })
 
 const browser = await launch({ width, height, dpr: o.dpr })
 const page = await openGallery(browser, o.theme)
-console.log(`GPU: ${await gpuInfo(page)}`)
+const gpu = await gpuInfo(page)
+console.log(`GPU: ${gpu}`)
+// Without WebGL2 every GPU-drawn example renders blank but raises no page error.
+if (gpu === 'no WebGL2') {
+  console.error('No WebGL2 in this browser: GPU-rendered content would be blank. Snapshots not taken.')
+  await browser.close()
+  process.exit(1)
+}
+if (/SwiftShader|llvmpipe|software/i.test(gpu)) console.warn('Note: software rendering; snapshots are valid but slow.')
 const ids = exampleIds(o.filter)
 const failures = []
 const t0 = Date.now()
@@ -27,6 +35,8 @@ for (const id of ids) {
     const el = await page.$('#chart-host')
     await (el ?? page).screenshot({ path: file })
   }
+  const glError = await page.evaluate(() => window.__sfericDebug?.glError?.() ?? null)
+  if (glError) page.__errors.push(`GPU context unavailable: ${glError}`)
   const errs = [...new Set(page.__errors)]
   if (errs.length) failures.push({ id, errs })
   console.log(`${errs.length ? 'ERR ' : 'ok  '} ${id}${errs.length ? '  ' + errs[0].slice(0, 160) : ''}`)

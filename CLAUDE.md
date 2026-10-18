@@ -29,20 +29,23 @@ npm run test:browser                  # context loss, no-WebGL, GPU memory relea
 npm run verify:package                # pack + clean install + ESM/CJS + types (bundler/node16/nodenext)
 npm run snap                          # every example -> .snapshots/<theme>/<id>.png; fails on page or WebGL errors
 npm run snap -- --theme light --filter rt-,xy-log
-npm run bench                         # frame-time table, vsync off (--vsync to cap)
+npm run bench                         # GPU-synced cost per rendered frame (debug.syncGPU + debug.onFrame)
+$env:SFERIC_CHROME_ARGS="--disable-webgl --disable-webgl2"; npm run snap   # extra Chrome flags for any script
 node scripts/glcount.mjs <id>         # WebGL calls per frame
 node scripts/profile.mjs <id> [s]     # CPU profile, self time by function
 node scripts/gpu-experiment.mjs <id> bufferSubData   # stub a GL call, compare frame time
 ```
 
-Reference numbers (Intel Arc iGPU, 1920x1080, vsync off): 100-chart streaming
-dashboard ~9 ms/frame, 10M-point line zoom ~6 ms, 1M scatter pan ~1.6 ms.
+Reference numbers (`npm run bench`: GPU-synced cost per rendered frame, Intel Arc
+iGPU, 1920x1080): 100-chart streaming dashboard ~9 ms, 10M-point line zoom ~4.3 ms,
+1M scatter pan ~11.5 ms (GPU-bound), streaming/heatmap ~3.2 ms. `gl.finish()` does
+not wait for the GPU in Chrome; `debug.syncGPU` reads back a pixel instead.
 
 Visual check without a screenshot tool: in the gallery page (dev only),
 `await window.__snap('name')` POSTs the current chart canvas to the Vite
 middleware, which writes `.snapshots/name.png` (gitignored). View it with Read.
 The library touches no globals; diagnostics live in the exported `debug` object
-(`debug.stats`, `debug.syncGPU`, `debug.renderer()`, `debug.loseContext()`). In dev
+(`debug.stats`, `debug.syncGPU`, `debug.onFrame`, `debug.renderer()`, `debug.loseContext()`). In dev
 the gallery mirrors it as `window.__sfericStats` / `window.__sfericDebug` for the scripts.
 The gallery self-accepts HMR: edits re-run the current example in place
 instead of reloading the page.
@@ -77,7 +80,22 @@ instead of reloading the page.
   `0` otherwise. The bloom is a post-process over the whole surface.
 - Data precision: stores keep float32 values relative to a per-chunk origin;
   transforms are built in float64 by `makeXform(axisMapX, axisMapY, ox, oy, dpr)`.
-  Never upload absolute epoch-ms timestamps as float32.
+  Never upload absolute epoch-ms timestamps as float32. `toPx()` subtracts the view
+  start (a two-part float32 `u_anchor`) before scaling. **Why:** at deep zoom the
+  chunk origin is 1e9+ px away and a single float32 bias misplaced data by up to
+  ~400 px. Never fold the anchor into `u_bias`.
+- Far segments: a segment endpoint more than 2^20 px past the target is beyond what
+  float32 clipping resolves. `splitFar` (draw.ts) clips the first/last visible
+  segment of monotonic series in float64 on the CPU; `LINE_VS` clips in two stages;
+  the vertex clamp `CLAMP_PX` (shaders.ts) must stay above the CPU threshold.
+  `npm run test:browser` measures all of this against tests/fixtures/precision.html.
+- X low word: a chunk allocates `xl` (x - ox - fround(x - ox)) on the first point whose
+  x is not exact in float32; shaders take it as `a_xl0`/`a_xl1` (ATTR 12/13, generic 0
+  when absent, e.g. LOD buffers and splitFar cuts) via `toPx(p, xl)`. draw.ts binds it
+  only when `xlOf` finds the high word could be off by more than 1/64 px at the current
+  zoom (`Chunk.xmag`), so normal views skip the extra fetch. For exact x on the
+  CPU use `Chunk.rx()` / `x()`; `xy[2i]` alone is the rounded high word (fine for LOD).
+  Y stays single float32 relative to `oy` (error up to 2^-25 x the chunk's y span).
 - 3D content uses the depth buffer the FBO already has (cleared per frame);
   enable/disable `DEPTH_TEST` inside your own `drawGL`.
 - MSAA is opt-in: `Panel.wantsMSAA()` (default false). 2D primitives are
@@ -123,7 +141,9 @@ colors/fonts from `this.theme` (never hard-code a palette). Use `Mutator<T>`
   `usesRawGL() === true` (the default) so the cache is invalidated around
   them; never mix raw `gl.uniform*` and cached setters for one uniform.
 - `npm run snap` treats WebGL console warnings as errors; keep it that way,
-  since dropped draws raise no exception.
+  since dropped draws raise no exception. Puppeteer reports them as type `warn`;
+  `openGallery` plants a canary warning and aborts if the hook misses it. snap also
+  fails when the browser has no WebGL2 (blank charts raise no error either).
 - Every object holding GPU handles must remember the `gl` context that created
   them and, when handed a different one, drop the handles and re-upload from its
   CPU copy (see `XYStore.bindCtx`, `GLBuf.stale`). **Why:** after a context loss

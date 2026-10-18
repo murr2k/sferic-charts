@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sferic fixture: deep-zoom precision</title>
+    <style>html, body { margin: 0; } #c { position: absolute; left: 0; top: 0; width: 1000px; height: 600px; }</style>
+  </head>
+  <body>
+    <div id="c"></div>
+    <script type="module">
+      // Fixture for scripts/robustness.mjs (served by the dev server): draws marks at
+      // known coordinates far from their chunk origin, zooms deep, and reports where
+      // the pixels landed against the float64 position from translateCoordinate.
+      import { sferic, Themes, SolidFill, SolidLine, ColorHEX, emptyLine } from '/src/index.ts'
+      const MARK = ColorHEX('#ff00ff')
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+
+      let chart = null
+      function fresh() {
+        chart?.dispose()
+        chart = sferic().ChartXY({ container: 'c', theme: Themes.daylight, legend: { visible: false } }).setTitle('')
+        chart.setAnimationsEnabled(false)
+        return chart
+      }
+      /** Magenta pixels of the chart canvas: count, centroid and top row (CSS px, canvas-relative). */
+      function marks(column, row) {
+        const cv = document.querySelector('#c canvas')
+        const { width: w, height: h } = cv
+        const d = cv.getContext('2d').getImageData(0, 0, w, h).data
+        let n = 0, sx = 0, sy = 0, top = Infinity, right = -Infinity
+        for (let y = 0; y < h; y++) {
+          if (row !== undefined && y !== row) continue
+          for (let x = 0; x < w; x++) {
+            if (column !== undefined && x !== column) continue
+            const i = (y * w + x) * 4
+            if (d[i] > 200 && d[i + 1] < 110 && d[i + 2] > 200) { n++; sx += x; sy += y; top = Math.min(top, y); right = Math.max(right, x) }
+          }
+        }
+        return n ? { n, x: sx / n, y: sy / n, top, right } : { n: 0 }
+      }
+      const expected = (x, y) => {
+        const b = document.querySelector('#c canvas').getBoundingClientRect()
+        const p = chart.translateCoordinate({ x, y }, chart.coordsAxis, chart.coordsClient)
+        return { x: p.x - b.left, y: p.y - b.top }
+      }
+
+      window.__precision = {
+        /**
+         * One marker at X (y = 0) in a series whose chunk origin is `origin`; the view is
+         * centred near X and zoomed to `k` px per unit, so the origin is (X - origin) * k px away.
+         */
+        async point({ origin, X, k }) {
+          const c = fresh()
+          c.addPointSeries().setPointSize(9).setEffect(false).setPointFillStyle(new SolidFill({ color: MARK }))
+            .appendJSON([{ x: origin, y: 0 }, { x: X, y: 0 }])
+          const W = 900 / k
+          // Off-centre so the view start is not a round number.
+          c.axisX.setInterval({ start: X - W * 0.437, end: X + W * 0.563, animate: false })
+          c.axisY.setInterval({ start: -1, end: 1, animate: false })
+          await frame()
+          const m = marks(), e = expected(X, 0)
+          return { drawn: m.n > 0, err: m.n ? m.x - e.x : null, offsetPx: Math.abs(X - origin) * k }
+        },
+        /**
+         * One line segment from (-L, -L * slope) to (L, L * slope), viewed around (0, 0) at `k` px
+         * per unit on both axes: both endpoints are L * k px off screen.
+         */
+        async segment({ L, k, slope = 0.37 }) {
+          const c = fresh()
+          c.addLineSeries().setEffect(false).setStrokeStyle(new SolidLine({ thickness: 3, fillStyle: new SolidFill({ color: MARK }) }))
+            .appendJSON([{ x: -L, y: -L * slope }, { x: L, y: L * slope }])
+          const W = 900 / k
+          c.axisX.setInterval({ start: -W * 0.437, end: W * 0.563, animate: false })
+          c.axisY.setInterval({ start: -W * 0.3, end: W * 0.3, animate: false })
+          await frame()
+          // Vertical error where the line crosses the column of x = 0.
+          const e = expected(0, 0)
+          const col = Math.round(e.x)
+          const m = marks(col)
+          return { drawn: marks().n > 0, err: m.n ? m.y - e.y : null, offsetPx: L * k }
+        },
+      }
+      Object.assign(window.__precision, {
+        /** Area fill under the same segment as segment(); error of its top edge where it crosses mid-plot. */
+        async area({ L, k, slope = 0.37 }) {
+          const c = fresh()
+          c.addAreaSeries().setEffect(false).setStrokeStyle(emptyLine).setAreaFillStyle(new SolidFill({ color: MARK }))
+            .appendJSON([{ x: -L, y: -L * slope }, { x: L, y: L * slope }])
+          const W = 900 / k
+          c.axisX.setInterval({ start: -W * 0.437, end: W * 0.563, animate: false })
+          c.axisY.setInterval({ start: -W * 0.3, end: W * 0.3, animate: false })
+          await frame()
+          const x = Math.min(0.3, 0.15 / Math.abs(slope || 1)) * W
+          const e = expected(x, x * slope)
+          const m = marks(Math.round(e.x))
+          return { drawn: marks().n > 0, err: m.n ? m.top - e.y : null, offsetPx: L * k }
+        },
+        /**
+         * A vertical edge at X, where X - origin is not representable in float32; horizontal
+         * error. style 'line' / 'prim' (1 px): series (origin, -0.5) -> (X, -0.5) -> (X, 0.5).
+         * 'area': fill under (origin, 0.5) -> (X - 300 px, 0.5) -> (X, 0.5), right edge.
+         */
+        async vline({ origin, X, k, style = 'line' }) {
+          const c = fresh()
+          const W = 900 / k
+          if (style === 'area') {
+            c.addAreaSeries().setEffect(false).setStrokeStyle(emptyLine).setAreaFillStyle(new SolidFill({ color: MARK }))
+              .appendJSON([{ x: origin, y: 0.5 }, { x: X - 300 / k, y: 0.5 }, { x: X, y: 0.5 }])
+          } else {
+            c.addLineSeries().setEffect(false)
+              .setStrokeStyle(new SolidLine({ thickness: style === 'prim' ? -1 : 3, fillStyle: new SolidFill({ color: MARK }) }))
+              .appendJSON([{ x: origin, y: -0.5 }, { x: X, y: -0.5 }, { x: X, y: 0.5 }])
+          }
+          c.axisX.setInterval({ start: X - W * 0.437, end: X + W * 0.563, animate: false })
+          c.axisY.setInterval({ start: -1, end: 1, animate: false })
+          await frame()
+          const e = expected(X, style === 'area' ? 0.25 : 0)
+          const m = marks(undefined, Math.round(e.y))
+          return { drawn: m.n > 0, err: m.n ? (style === 'area' ? m.right : m.x) - e.x : null, offsetPx: Math.abs(X - origin) * k }
+        },
+      })
+      window.__precisionReady = true
+    </script>
+  </body>
+</html>

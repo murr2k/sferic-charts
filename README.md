@@ -4,7 +4,7 @@ GPU-accelerated charting for the browser. Sferic renders millions of data points
 at interactive frame rates with WebGL2, ships with a dark, glowing default theme,
 and uses a fluent builder API. Zero runtime dependencies.
 
-![Sferic gallery: real-time dashboards, 3D surfaces, heatmaps, trading, polar, treemap, gauges, parallel coordinates, map](docs/gallery.jpg)
+![Sferic gallery: real-time dashboards, 3D surfaces, heatmaps, trading, polar, treemap, gauges, parallel coordinates, map](https://raw.githubusercontent.com/murr2k/sferic-charts/main/docs/gallery.jpg)
 
 > A *sferic* is the broadband radio impulse emitted by a lightning stroke.
 
@@ -39,14 +39,12 @@ and uses a fluent builder API. Zero runtime dependencies.
 
 ## Quick start
 
-Sferic is not published to npm yet. Build it from source:
-
 ```bash
-git clone https://github.com/murr2k/sferic-charts.git
-cd sferic-charts
-npm install
-npm run build:lib        # dist/sferic.js (ES module), dist/sferic.umd.cjs, dist/types
+npm install sferic-charts
 ```
+
+The package ships an ES module, a UMD/CommonJS build and TypeScript declarations for
+both.
 
 ```ts
 import { sferic, AxisTickStrategies, Themes } from 'sferic-charts'
@@ -151,20 +149,24 @@ best reference for what is covered.
 
 ## Performance
 
-Measured with `npm run bench` (headless Chrome, real GPU, vsync off) on an Intel Arc
-integrated GPU at 1920x1080:
+Measured with `npm run bench` on an Intel Arc integrated GPU at 1920x1080 (headless
+Chrome): the wall time of each rendered frame, CPU and GPU, synchronized with a
+1-pixel readback (about 0.4 ms of each figure).
 
-| Scenario | Median frame |
+| Scenario | Median cost per frame |
 |---|---|
-| 1M-point scatter, per-point colors, panning | 1.6 ms |
-| 10 channels x 1 kHz streaming | 1.7 ms |
-| Real-time FFT spectrogram | 3.3 ms |
-| 10M-point line, wheel zooming | 6.3 ms |
-| 100 live charts in one dashboard | 9.2 ms |
+| 10 channels x 1 kHz streaming | 3.2 ms |
+| 1000x1000 heatmap, wheel zooming | 3.2 ms |
+| Real-time FFT spectrogram | 3.7 ms |
+| 10M-point line, wheel zooming | 4.3 ms |
+| 100 live charts in one dashboard | 9.1 ms |
+| 1M-point scatter, per-point colors, panning | 11.5 ms |
 
 ## Development
 
 ```bash
+git clone https://github.com/murr2k/sferic-charts.git
+cd sferic-charts
 npm install
 npm run dev              # gallery at http://127.0.0.1:8779 (run.cmd on Windows)
 npm run typecheck
@@ -173,7 +175,7 @@ npm run build            # static gallery build
 npm test                 # map decoder hostile-input tests
 npm run snap             # screenshot every example headlessly; fails on page or WebGL errors
 npm run test:browser     # context loss, no-WebGL, GPU memory and accessibility checks
-npm run bench            # frame-time benchmarks
+npm run bench            # GPU-synced cost per rendered frame
 npm run verify:package   # pack, install into a clean project, check imports and types
 ```
 
@@ -186,7 +188,7 @@ and are discovered automatically.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/murr2k/sferic-charts/blob/main/LICENSE).
 
 ## Trademarks
 

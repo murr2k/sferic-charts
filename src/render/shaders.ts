@@ -13,6 +13,8 @@ export const ATTR = {
   lo0: 9,
   lo1: 10,
   rot: 11,
+  xl0: 12,
+  xl1: 13,
 } as const
 
 /** Shared vertex header: u_res, xform uniforms, toPx(), pxToClip(), bad(), LUT helpers. */
@@ -24,12 +26,22 @@ uniform vec2 u_scale;
 uniform vec2 u_bias;
 uniform vec2 u_origin;
 uniform vec2 u_logb;
-vec2 toPx(vec2 p) {
-  vec2 q = p;
+uniform vec4 u_anchor;   // view start relative to the chunk origin: xy high, zw low parts
+// p: chunk-relative position; xl: low word of p.x (XY stores, 0 elsewhere).
+vec2 toPx(vec2 p, float xl) {
+  // Two-part subtraction: p - anchor.xy is exact when p is near the view, so the
+  // result stays accurate however far the chunk origin is (see makeXform). The low
+  // words are subtracted separately and added last.
+  vec2 q = (p - u_anchor.xy) + (vec2(xl, 0.0) - u_anchor.zw);
   if (u_logb.x > 0.0) q.x = log(max(p.x + u_origin.x, 1e-37)) / log(u_logb.x);
   if (u_logb.y > 0.0) q.y = log(max(p.y + u_origin.y, 1e-37)) / log(u_logb.y);
   return q * u_scale + u_bias;
 }
+vec2 toPx(vec2 p) { return toPx(p, 0.0); }
+// Vertex clamp for primitives without their own clipping. Kept well above the
+// distance at which draw.ts clips boundary segments on the CPU (splitFar, 2^20 px
+// past the target), since clamping a vertex bends the edges that meet it.
+const float CLAMP_PX = 4194304.0;
 vec4 pxToClip(vec2 px) { return vec4(px.x / u_res.x * 2.0 - 1.0, 1.0 - px.y / u_res.y * 2.0, 0.0, 1.0); }
 bool bad(float v) { return !(v == v) || abs(v) > 1e30; }
 // Color lookup: mode 0 = none, 1 = by x, 2 = by y, 3 = by value attribute.
@@ -72,6 +84,8 @@ layout(location = 4) in vec4 a_c1;
 layout(location = 5) in float a_v0;
 layout(location = 6) in float a_v1;
 layout(location = 7) in float a_d0;
+layout(location = 12) in float a_xl0;
+layout(location = 13) in float a_xl1;
 uniform float u_halfw;
 uniform vec4 u_color;
 out vec2 v_px;
@@ -88,21 +102,36 @@ bool clipT(float p, float q, inout float t0, inout float t1) {
   else { if (r < t0) return false; if (r < t1) t1 = r; }
   return true;
 }
+// Liang-Barsky: narrow [t0, t1] of s + t * d to the box [lo, hi]; false if it misses.
+bool clipBox(vec2 s, vec2 d, vec2 lo, vec2 hi, inout float t0, inout float t1) {
+  return clipT(-d.x, s.x - lo.x, t0, t1) && clipT(d.x, hi.x - s.x, t0, t1)
+      && clipT(-d.y, s.y - lo.y, t0, t1) && clipT(d.y, hi.y - s.y, t0, t1);
+}
+// Endpoints beyond this many px are first clipped to a coarse box: otherwise the
+// visible fraction of a very long segment is below the float32 resolution of t and
+// the whole segment is rejected.
+const float FAR_PX = 1048576.0;
 
 void main() {
-  vec2 s0 = toPx(a_p0);
-  vec2 s1 = toPx(a_p1);
+  vec2 s0 = toPx(a_p0, a_xl0);
+  vec2 s1 = toPx(a_p1, a_xl1);
   if (bad(s0.x) || bad(s0.y) || bad(s1.x) || bad(s1.y)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 d = s1 - s0;
   float m = u_halfw + 64.0;
-  vec2 lo = vec2(-m);
-  vec2 hi = u_res + m;
   float t0 = 0.0, t1 = 1.0;
-  bool ok = clipT(-d.x, s0.x - lo.x, t0, t1) && clipT(d.x, hi.x - s0.x, t0, t1)
-         && clipT(-d.y, s0.y - lo.y, t0, t1) && clipT(d.y, hi.y - s0.y, t0, t1);
-  if (!ok) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  vec2 c0 = s0 + d * t0;
-  vec2 c1 = s0 + d * t1;
+  vec2 a = s0, b = s1;
+  vec2 far = max(max(-s0, s0 - u_res), max(-s1, s1 - u_res));
+  if (max(far.x, far.y) > FAR_PX) {
+    if (!clipBox(s0, d, vec2(-FAR_PX), u_res + FAR_PX, t0, t1)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    a = s0 + d * t0;
+    b = s0 + d * t1;
+  }
+  vec2 ab = b - a;
+  float u0 = 0.0, u1 = 1.0;
+  if (!clipBox(a, ab, vec2(-m), u_res + m, u0, u1)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec2 c0 = a + ab * u0;
+  vec2 c1 = a + ab * u1;
+  t0 = t0 + (t1 - t0) * u0;
   vec2 dd = c1 - c0;
   float len = length(dd);
   vec2 dir = len > 1e-6 ? dd / len : vec2(1.0, 0.0);
@@ -155,13 +184,14 @@ export const PRIM_VS = VS_HEAD + /* glsl */ `
 layout(location = 1) in vec2 a_p0;
 layout(location = 3) in vec4 a_c0;
 layout(location = 5) in float a_v0;
+layout(location = 12) in float a_xl0;
 uniform vec4 u_color;
 out vec4 v_col;
 void main() {
-  vec2 s = toPx(a_p0);
+  vec2 s = toPx(a_p0, a_xl0);
   v_col = u_color * a_c0 * pointColor(a_p0, a_v0);
   if (bad(s.x) || bad(s.y)) { v_col.a = 0.0; s = vec2(0.0); }
-  gl_Position = pxToClip(clamp(s, vec2(-1e6), vec2(1e6)));
+  gl_Position = pxToClip(clamp(s, vec2(-CLAMP_PX), vec2(CLAMP_PX)));
 }
 `
 export const PRIM_FS = FS_HEAD + /* glsl */ `
@@ -178,6 +208,7 @@ layout(location = 3) in vec4 a_c0;
 layout(location = 5) in float a_v0;
 layout(location = 8) in float a_size;
 layout(location = 11) in float a_rot;
+layout(location = 12) in float a_xl0;
 uniform float u_size;
 uniform float u_sizeScale;
 uniform vec4 u_color;
@@ -185,7 +216,7 @@ out vec2 v_uv;
 flat out float v_r;
 out vec4 v_col;
 void main() {
-  vec2 s = toPx(a_p0);
+  vec2 s = toPx(a_p0, a_xl0);
   float size = a_size > 0.0 ? a_size * u_sizeScale : u_size;
   if (bad(s.x) || bad(s.y) || size <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float r = size * 0.5 + 1.0;
@@ -277,16 +308,18 @@ layout(location = 1) in vec2 a_p0;
 layout(location = 2) in vec2 a_p1;
 layout(location = 9) in float a_lo0;
 layout(location = 10) in float a_lo1;
+layout(location = 12) in float a_xl0;
+layout(location = 13) in float a_xl1;
 out vec2 v_px;
 out float v_val;
 void main() {
   vec2 p = a_corner.x < 0.5 ? a_p0 : a_p1;
   float lo = a_corner.x < 0.5 ? a_lo0 : a_lo1;
   vec2 q = a_corner.y < 0.5 ? vec2(p.x, lo) : p;
-  vec2 s = toPx(q);
-  vec2 s0 = toPx(a_p0), s1 = toPx(a_p1);
+  vec2 s = toPx(q, a_corner.x < 0.5 ? a_xl0 : a_xl1);
+  vec2 s0 = toPx(a_p0, a_xl0), s1 = toPx(a_p1, a_xl1);
   if (bad(s0.x) || bad(s0.y) || bad(s1.x) || bad(s1.y) || bad(lo)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  s = clamp(s, vec2(-1e6), vec2(1e6));
+  s = clamp(s, vec2(-CLAMP_PX), vec2(CLAMP_PX));
   v_px = s;
   v_val = q.y + u_origin.y;
   gl_Position = pxToClip(s);

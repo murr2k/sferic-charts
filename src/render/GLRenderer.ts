@@ -12,12 +12,22 @@ export interface Program {
   fs: string
 }
 
-/** Device-pixel mapping of chunk-relative data: px = toLog?(p + origin) * scale + bias. */
+/**
+ * Device-pixel mapping of chunk-relative data p:
+ *   linear axis: px = ((p - anchorHi) - anchorLo) * scale + bias
+ *   log axis:    px = log_b(p + origin) * scale + bias
+ * The anchor is the view start relative to the chunk origin, split into two float32
+ * parts. Subtracting it before scaling keeps on-screen positions exact at deep zoom,
+ * where the origin can be 1e9+ px away and a single float32 offset would be rounded
+ * by tens to hundreds of pixels.
+ */
 export interface Xform {
   scale: [number, number]
   bias: [number, number]
   origin: [number, number]
   logb: [number, number]
+  /** x hi, y hi, x lo, y lo */
+  anchor: [number, number, number, number]
 }
 
 /** One axis mapping in CSS px: px = a0 + (f(v) - f(start)) * k where f is identity or log_base. */
@@ -32,13 +42,16 @@ const logb = (v: number, b: number) => Math.log(v) / Math.log(b)
 
 /** Build a chunk transform from two axis maps (CSS px) and a chunk origin, scaled to device px. */
 export function makeXform(mx: AxisMap, my: AxisMap, ox: number, oy: number, dpr: number): Xform {
-  const one = (m: AxisMap, o: number): [number, number] => {
-    if (m.log > 0) return [m.k * dpr, (m.a0 - logb(m.start, m.log) * m.k) * dpr]
-    return [m.k * dpr, (m.a0 + (o - m.start) * m.k) * dpr]
+  // [scale, bias, anchor hi, anchor lo]
+  const one = (m: AxisMap, o: number): [number, number, number, number] => {
+    if (m.log > 0) return [m.k * dpr, (m.a0 - logb(m.start, m.log) * m.k) * dpr, 0, 0]
+    const c = m.start - o
+    const hi = Math.fround(c)
+    return [m.k * dpr, m.a0 * dpr, hi, Math.fround(c - hi)]
   }
-  const [sx, bx] = one(mx, ox)
-  const [sy, by] = one(my, oy)
-  return { scale: [sx, sy], bias: [bx, by], origin: [ox, oy], logb: [mx.log, my.log] }
+  const [sx, bx, hx, lx] = one(mx, ox)
+  const [sy, by, hy, ly] = one(my, oy)
+  return { scale: [sx, sy], bias: [bx, by], origin: [ox, oy], logb: [mx.log, my.log], anchor: [hx, hy, lx, ly] }
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -94,6 +107,7 @@ export class GLRenderer {
   /** Current surface size in device px. */
   w = 0
   h = 0
+  private syncPx = new Uint8Array(4)
   dpr = 1
   /** Current glow multiplier for subsequent draws (0..1). */
   glow = 0
@@ -301,7 +315,7 @@ export class GLRenderer {
         this.pointers.delete(loc)
       }
     }
-    // Generic defaults: colors white, values 0, size 0, rotation 0.
+    // Generic defaults: colors white, values 0, size 0, rotation 0, x low word 0.
     if (!keep.includes(ATTR.c0)) this.gen4white(ATTR.c0)
     if (!keep.includes(ATTR.c1)) this.gen4white(ATTR.c1)
     if (!keep.includes(ATTR.v0)) this.gen1(ATTR.v0, 0)
@@ -309,6 +323,8 @@ export class GLRenderer {
     if (!keep.includes(ATTR.d0)) this.gen1(ATTR.d0, 0)
     if (!keep.includes(ATTR.size)) this.gen1(ATTR.size, 0)
     if (!keep.includes(ATTR.rot)) this.gen1(ATTR.rot, 0)
+    if (!keep.includes(ATTR.xl0)) this.gen1(ATTR.xl0, 0)
+    if (!keep.includes(ATTR.xl1)) this.gen1(ATTR.xl1, 0)
   }
 
   cornerBuffer(kind: 'quad' | 'line' | 'point'): WebGLBuffer {
@@ -317,6 +333,16 @@ export class GLRenderer {
 
   // ---------------------------------------------------------------- uniforms
 
+  /**
+   * Block until the GPU has finished all submitted work (profiling). gl.finish() returns
+   * immediately in Chrome, so this reads back one pixel of the default framebuffer,
+   * which end() leaves bound.
+   */
+  syncGPU() {
+    const gl = this.gl
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.syncPx)
+  }
+
   useXform(p: Program, x: Xform) {
     this.gl.useProgram(p.prog)
     this.u2f(p.u.u_res, this.w, this.h)
@@ -324,6 +350,7 @@ export class GLRenderer {
     this.u2f(p.u.u_bias, x.bias[0], x.bias[1])
     this.u2f(p.u.u_origin, x.origin[0], x.origin[1])
     this.u2f(p.u.u_logb, x.logb[0], x.logb[1])
+    this.u4f(p.u.u_anchor, x.anchor[0], x.anchor[1], x.anchor[2], x.anchor[3])
     this.u1f(p.u.u_glow, this.glow)
   }
 

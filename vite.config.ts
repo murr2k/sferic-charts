@@ -1,6 +1,7 @@
 import { defineConfig, Plugin } from 'vite'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
+import { cpus } from 'node:os'
 
 /**
  * Dev-only: POST /__snap?name=foo with a PNG body writes it to SFERIC_SNAP_DIR
@@ -31,9 +32,31 @@ function snapshotSink(): Plugin {
   }
 }
 
+/**
+ * Dev-only: GET /__cpu returns cumulative [idle, busy] milliseconds per logical
+ * processor (os.cpus()). The live CPU example derives utilization from deltas.
+ * Windows already counts interrupt time inside `sys` (user + sys + idle = wall
+ * time), so `irq` is added only on other platforms.
+ */
+function cpuTimes(): Plugin {
+  return {
+    name: 'sferic-cpu-times',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__cpu', (_req, res) => {
+        const irq = process.platform === 'win32' ? 0 : 1
+        const times = cpus().map(({ times: t }) => [t.idle, t.user + t.nice + t.sys + irq * t.irq])
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-store')
+        res.end(JSON.stringify({ times }))
+      })
+    },
+  }
+}
+
 // Gallery dev server. Port 8779 is allocated in ~/.claude/port-registry.md.
 export default defineConfig({
-  plugins: [snapshotSink()],
+  plugins: [snapshotSink(), cpuTimes()],
   server: { port: 8779, strictPort: true, host: '127.0.0.1' },
   preview: { port: 8779, strictPort: true, host: '127.0.0.1' },
   build: { outDir: 'dist-gallery', target: 'es2022' },

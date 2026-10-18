@@ -6,10 +6,14 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
 ### Fixed
 
 - Type declarations resolve under `moduleResolution` `node16` and `nodenext`
-  (relative imports now carry explicit `.js` extensions).
+  (relative imports now carry explicit `.js` extensions), and CommonJS consumers get
+  CommonJS declarations (`.d.cts`, through the `require` condition) instead of ESM
+  ones that TypeScript rejected with TS1479.
 - When WebGL2 cannot be created, 2D-only charts keep rendering and GPU-rendered panels
   show a notice instead of every chart on the page stopping; creation is retried.
 - GPU context loss is recovered: the shared context is replaced and every chart
@@ -18,6 +22,27 @@ All notable changes to Sferic Charts are documented here. The format follows
   transform, nesting depth, size budget) and throws descriptive errors.
 - Polar and hierarchy GPU buffers are re-specified whole instead of partially updated,
   avoiding pipeline stalls.
+- Deep zoom draws data where it belongs. When a chunk's origin was 1e9 px or more from
+  the view, a float32 offset in the vertex shader misplaced points and lines by tens
+  to hundreds of pixels; shaders now subtract a two-part view anchor before scaling.
+- Deep zoom keeps long segments: line segments and area edges whose endpoints lie
+  1e10 px or more off screen no longer tilt or vanish. Boundary segments of
+  monotonic series are clipped in float64 on the CPU, and the line shader clips the
+  rest in two stages.
+- Deep zoom keeps x at full precision: chunks store x as a float32 high word plus,
+  when needed, a low word. Float32 alone rounded x to 2^-25 of the chunk's span, which
+  put a mark in an hour of fractional epoch-ms timestamps 127 px off at 1 µs per pixel.
+- Area fills and 1 px lines no longer bend when a vertex is about 1e6 px off screen.
+- Heatmap series can be created when WebGL2 is unavailable (the GPU panel shows the
+  notice instead of the constructor throwing).
+- `debug.stats` moving averages start from the first sample instead of decaying up
+  from 0.
+- `debug.syncGPU` waits for the GPU (a 1-pixel readback); it called `gl.finish()`,
+  which returns immediately in Chrome, so "GPU" timings were CPU submission only.
+- Development: `npm run snap` fails without WebGL2 or when an example renders without
+  a GPU context; the test harness records WebGL warnings again (puppeteer reports them
+  as `warn`) and proves it with a planted warning at startup; `verify:package` also
+  rejects Linux and macOS home directory paths.
 
 ### Changed
 
@@ -27,6 +52,11 @@ All notable changes to Sferic Charts are documented here. The format follows
   library no longer touches any global.
 - Chart canvases expose `role="img"` and an `aria-label` (the chart title by default,
   or `setAccessibleLabel()`).
+- `npm run bench` reports the GPU-synced cost of each rendered frame instead of the
+  interval between animation frames, which measured input pacing. The README
+  performance table is re-measured this way (the 1M-point scatter costs 11.5 ms per
+  frame, not the 1.6 ms frame interval quoted before).
+- `debug.stats.glFinish` is renamed `gpuSync`.
 
 ### Added
 
@@ -34,6 +64,11 @@ All notable changes to Sferic Charts are documented here. The format follows
   (context loss, no-WebGL, GPU memory and accessibility checks),
   `npm run verify:package`, and a `prepublishOnly` gate running typecheck, tests,
   build and package verification.
+- `debug.onFrame` hook: wall time of each rendered frame (with `debug.syncGPU`, including
+  GPU completion).
+- Gallery example: live per-core CPU utilization on a spider chart with a 10 s peak
+  envelope, read from the OS through a dev-server endpoint (`/__cpu`); simulated in
+  the static build.
 
 ### Security
 
@@ -71,5 +106,6 @@ First release.
 - Headless verification tooling: `npm run snap`, `npm run bench`, and diagnostic
   scripts for GL call counts, CPU profiles and GPU stall experiments.
 
-[Unreleased]: https://github.com/murr2k/sferic-charts/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/murr2k/sferic-charts/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/murr2k/sferic-charts/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/murr2k/sferic-charts/releases/tag/v0.1.0

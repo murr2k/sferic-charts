@@ -1,6 +1,6 @@
 import { Color } from '../core/color'
 import { DashedLine, Fill, LUT, LookUpProperty, PalettedFill } from '../core/style'
-import { XYStore, Chunk } from '../xy/store'
+import { XYStore, Chunk, GpuBufs } from '../xy/store'
 import { AxisMap, FillParams, GLRenderer, makeXform, Rect } from './GLRenderer'
 import * as S from './shaders'
 
@@ -12,6 +12,81 @@ const lutModeOf = (p: LookUpProperty) => (p === 'x' ? 1 : p === 'y' ? 2 : 3)
 
 function chunkSetup(r: GLRenderer, prog: ReturnType<GLRenderer['program']>, maps: XYMaps, ch: Chunk) {
   r.useXform(prog, makeXform(maps.mx, maps.my, ch.ox, ch.oy, r.dpr))
+}
+
+/** Device px of a data value on one axis, in float64. */
+function axisPx(m: AxisMap, v: number, dpr: number) {
+  const f = m.log ? Math.log(v) / Math.log(m.log) - Math.log(m.start) / Math.log(m.log) : v - m.start
+  return (m.a0 + f * m.k) * dpr
+}
+/** Inverse of axisPx. */
+function pxAxis(m: AxisMap, px: number, dpr: number) {
+  const f = (px / dpr - m.a0) / m.k
+  return m.log ? Math.pow(m.log, Math.log(m.start) / Math.log(m.log) + f) : m.start + f
+}
+
+/** Endpoints farther than this off the render target (device px) are clipped on the CPU. */
+const FAR_PX = 1 << 20
+
+/** Segment i -> i + 1 clipped to parameters [t0, t1], with the clipped ends in data coordinates. */
+interface FarCut { i: number; t0: number; t1: number; x0: number; y0: number; x1: number; y1: number }
+
+/**
+ * Deep zoom on sparse data can put the outer endpoint of a visible range's first or
+ * last segment 1e9+ px off screen, where float32 GPU math misplaces or drops the
+ * segment. For monotonic X those two segments are the only ones that can reach that
+ * far horizontally, so they are clipped here in float64 and drawn separately with an
+ * origin on screen. Returns the range left for the GPU and the clipped segments.
+ * xOnly: test and clip X only (area fills extend vertically anyway).
+ */
+function splitFar(store: XYStore, ch: Chunk, s: number, e: number, maps: XYMaps, r: GLRenderer, margin: number, xOnly: boolean) {
+  const cuts: FarCut[] = []
+  if (!store.monoX || e - s < 2) return { s, e, cuts }
+  const dpr = r.dpr, W = r.w, H = r.h
+  const far = (x: number, y: number) => x < -FAR_PX || x > W + FAR_PX || (!xOnly && (y < -FAR_PX || y > H + FAR_PX))
+  const take = (i: number) => {
+    const ax = axisPx(maps.mx, ch.x(i), dpr), ay = axisPx(maps.my, ch.y(i), dpr)
+    const bx = axisPx(maps.mx, ch.x(i + 1), dpr), by = axisPx(maps.my, ch.y(i + 1), dpr)
+    if (!(Number.isFinite(ax) && Number.isFinite(ay) && Number.isFinite(bx) && Number.isFinite(by))) return false
+    if (!far(ax, ay) && !far(bx, by)) return false
+    const dx = bx - ax, dy = by - ay
+    let t0 = 0, t1 = 1
+    const clip = (p: number, q: number) => {
+      if (p === 0) return q >= 0
+      const t = q / p
+      if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t }
+      else { if (t < t0) return false; if (t < t1) t1 = t }
+      return true
+    }
+    const hit = clip(-dx, ax + margin) && clip(dx, W + margin - ax) && (xOnly || (clip(-dy, ay + margin) && clip(dy, H + margin - ay)))
+    if (hit) {
+      cuts.push({
+        i, t0, t1,
+        x0: pxAxis(maps.mx, ax + dx * t0, dpr), y0: pxAxis(maps.my, ay + dy * t0, dpr),
+        x1: pxAxis(maps.mx, ax + dx * t1, dpr), y1: pxAxis(maps.my, ay + dy * t1, dpr),
+      })
+    }
+    return true
+  }
+  if (take(s)) s++
+  if (e - s >= 2 && take(e - 2)) e--
+  return { s, e, cuts }
+}
+
+/**
+ * A part's x low-word buffer, when needed: only if the float32 high word alone could
+ * be off by more than 1/64 px at this zoom (deep zoom), so normal views skip the fetch.
+ */
+function xlOf(g: GpuBufs, ch: Chunk, maps: XYMaps, dpr: number) {
+  return g.xl && ch.xmag * 2 ** -24 * Math.abs(maps.mx.k) * dpr > 1 / 64 ? g.xl.buf : null
+}
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+/** Per-byte interpolation of packed RGBA8. */
+function lerpRGBA(a: number, b: number, t: number) {
+  let out = 0
+  for (let k = 0; k < 32; k += 8) out |= Math.round(lerp((a >>> k) & 255, (b >>> k) & 255, t)) << k
+  return out >>> 0
 }
 
 export interface LineDrawStyle {
@@ -32,6 +107,8 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
   const usesColor = store.channels.has('color') && !pal
   let dashBuf: WebGLBuffer | null = null
   let dashArr: Float32Array | null = null
+  let dashPeriod = 0
+  let cutBuf: WebGLBuffer | null = null
   let distAcc = 0
   store.forVisible(maps.x0, maps.x1, (ch, ci) => {
     const [s, e] = store.visibleRange(ch, ci, maps.x0, maps.x1, false)
@@ -58,14 +135,13 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
       const pat = st.dashed.dashArray().map((v) => v * r.dpr)
       while (pat.length < 4) pat.push(...pat)
       r.u4f(prog.u.u_dash, pat[0], pat[1], pat[2], pat[3])
-      r.u1f(prog.u.u_dashPeriod, pat[0] + pat[1] + pat[2] + pat[3])
+      dashPeriod = pat[0] + pat[1] + pat[2] + pat[3]
+      r.u1f(prog.u.u_dashPeriod, dashPeriod)
       if (!dashArr || dashArr.length < n) dashArr = new Float32Array(Math.max(n, 1024))
-      const toPx = (m: AxisMap, v: number) =>
-        m.a0 + ((m.log ? Math.log(v) / Math.log(m.log) : v) - (m.log ? Math.log(m.start) / Math.log(m.log) : m.start)) * m.k
-      let px = toPx(maps.mx, ch.x(s)) * r.dpr, py = toPx(maps.my, ch.y(s)) * r.dpr
+      let px = axisPx(maps.mx, ch.x(s), r.dpr), py = axisPx(maps.my, ch.y(s), r.dpr)
       for (let i = 0; i < n - 1; i++) {
         dashArr[i] = distAcc
-        const qx = toPx(maps.mx, ch.x(s + i + 1)) * r.dpr, qy = toPx(maps.my, ch.y(s + i + 1)) * r.dpr
+        const qx = axisPx(maps.mx, ch.x(s + i + 1), r.dpr), qy = axisPx(maps.my, ch.y(s + i + 1), r.dpr)
         const d = Math.hypot(qx - px, qy - py)
         if (Number.isFinite(d)) distAcc = (distAcc + d) % 1e6
         px = qx
@@ -73,21 +149,27 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
       }
       if (!dashBuf) dashBuf = gl.createBuffer()!
     }
-    for (const p of store.parts(ch, s, e, true)) {
+    const margin = prim ? 2 : (Math.max(0.5, st.thickness) * r.dpr) / 2 + 64
+    const far = splitFar(store, ch, s, e, maps, r, margin, false)
+    for (const p of store.parts(ch, far.s, far.e, true)) {
       const g = p.gpu
       const k = p.start
+      const xl = xlOf(g, ch, maps, r.dpr)
       if (prim) {
         const keep: number[] = [ATTR.p0]
+        if (xl) keep.push(ATTR.xl0)
         if (usesColor) keep.push(ATTR.c0)
         if (usesValue) keep.push(ATTR.v0)
         r.resetAttribs(keep)
         r.attrib(ATTR.p0, g.xy!.buf, 2, gl.FLOAT, false, 8, k * 8, 0)
+        if (xl) r.attrib(ATTR.xl0, xl, 1, gl.FLOAT, false, 4, k * 4, 0)
         if (usesColor) r.attrib(ATTR.c0, g.color!.buf, 4, gl.UNSIGNED_BYTE, true, 4, k * 4, 0)
         if (usesValue) r.attrib(ATTR.v0, g.value!.buf, 1, gl.FLOAT, false, 4, k * 4, 0)
         gl.drawArrays(gl.LINE_STRIP, 0, p.count)
         continue
       }
       const keep: number[] = [ATTR.corner, ATTR.p0, ATTR.p1]
+      if (xl) keep.push(ATTR.xl0, ATTR.xl1)
       if (usesColor) keep.push(ATTR.c0, ATTR.c1)
       if (usesValue) keep.push(ATTR.v0, ATTR.v1)
       if (st.dashed) keep.push(ATTR.d0)
@@ -95,6 +177,10 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
       r.attrib(ATTR.corner, r.cornerBuffer('line'), 2, gl.FLOAT, false, 0, 0, 0)
       r.attrib(ATTR.p0, g.xy!.buf, 2, gl.FLOAT, false, 8, k * 8, 1)
       r.attrib(ATTR.p1, g.xy!.buf, 2, gl.FLOAT, false, 8, (k + 1) * 8, 1)
+      if (xl) {
+        r.attrib(ATTR.xl0, xl, 1, gl.FLOAT, false, 4, k * 4, 1)
+        r.attrib(ATTR.xl1, xl, 1, gl.FLOAT, false, 4, (k + 1) * 4, 1)
+      }
       if (usesColor) {
         r.attrib(ATTR.c0, g.color!.buf, 4, gl.UNSIGNED_BYTE, true, 4, k * 4, 1)
         r.attrib(ATTR.c1, g.color!.buf, 4, gl.UNSIGNED_BYTE, true, 4, (k + 1) * 4, 1)
@@ -110,11 +196,65 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
       }
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, p.count - 1)
     }
+    if (!far.cuts.length) return
+    // Far boundary segments: one instance each, origin at the clipped start.
+    // Layout (bytes): xy 0-15, colors 16-23, values 24-31, dash offset 32-35.
+    cutBuf ??= gl.createBuffer()!
+    const raw = new ArrayBuffer(36), f = new Float32Array(raw), u = new Uint32Array(raw)
+    for (const c of far.cuts) {
+      r.useXform(prog, makeXform(maps.mx, maps.my, c.x0, c.y0, r.dpr))
+      f.set([0, 0, c.x1 - c.x0, c.y1 - c.y0])
+      if (usesColor) {
+        u[4] = lerpRGBA(ch.color![c.i], ch.color![c.i + 1], c.t0)
+        u[5] = lerpRGBA(ch.color![c.i], ch.color![c.i + 1], c.t1)
+      }
+      if (usesValue) {
+        f[6] = lerp(ch.value![c.i], ch.value![c.i + 1], c.t0)
+        f[7] = lerp(ch.value![c.i], ch.value![c.i + 1], c.t1)
+      }
+      if (dashArr) {
+        const len = Math.hypot(
+          axisPx(maps.mx, ch.x(c.i + 1), r.dpr) - axisPx(maps.mx, ch.x(c.i), r.dpr),
+          axisPx(maps.my, ch.y(c.i + 1), r.dpr) - axisPx(maps.my, ch.y(c.i), r.dpr),
+        )
+        f[8] = (dashArr[c.i - s] + len * c.t0) % dashPeriod
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, cutBuf)
+      gl.bufferData(gl.ARRAY_BUFFER, raw, gl.STREAM_DRAW)
+      if (prim) {
+        const keep: number[] = [ATTR.p0]
+        if (usesColor) keep.push(ATTR.c0)
+        if (usesValue) keep.push(ATTR.v0)
+        r.resetAttribs(keep)
+        r.attrib(ATTR.p0, cutBuf, 2, gl.FLOAT, false, 8, 0, 0)
+        if (usesColor) r.attrib(ATTR.c0, cutBuf, 4, gl.UNSIGNED_BYTE, true, 4, 16, 0)
+        if (usesValue) r.attrib(ATTR.v0, cutBuf, 1, gl.FLOAT, false, 4, 24, 0)
+        gl.drawArrays(gl.LINE_STRIP, 0, 2)
+        continue
+      }
+      const keep: number[] = [ATTR.corner, ATTR.p0, ATTR.p1]
+      if (usesColor) keep.push(ATTR.c0, ATTR.c1)
+      if (usesValue) keep.push(ATTR.v0, ATTR.v1)
+      if (dashArr) keep.push(ATTR.d0)
+      r.resetAttribs(keep)
+      r.attrib(ATTR.corner, r.cornerBuffer('line'), 2, gl.FLOAT, false, 0, 0, 0)
+      r.attrib(ATTR.p0, cutBuf, 2, gl.FLOAT, false, 8, 0, 1)
+      r.attrib(ATTR.p1, cutBuf, 2, gl.FLOAT, false, 8, 8, 1)
+      if (usesColor) {
+        r.attrib(ATTR.c0, cutBuf, 4, gl.UNSIGNED_BYTE, true, 4, 16, 1)
+        r.attrib(ATTR.c1, cutBuf, 4, gl.UNSIGNED_BYTE, true, 4, 20, 1)
+      }
+      if (usesValue) {
+        r.attrib(ATTR.v0, cutBuf, 1, gl.FLOAT, false, 4, 24, 1)
+        r.attrib(ATTR.v1, cutBuf, 1, gl.FLOAT, false, 4, 28, 1)
+      }
+      if (dashArr) r.attrib(ATTR.d0, cutBuf, 1, gl.FLOAT, false, 4, 32, 1)
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1)
+    }
   })
-  if (dashBuf) {
-    r.resetAttribs([])
-    gl.deleteBuffer(dashBuf)
-  }
+  if (dashBuf || cutBuf) r.resetAttribs([])
+  if (dashBuf) gl.deleteBuffer(dashBuf)
+  if (cutBuf) gl.deleteBuffer(cutBuf)
 }
 
 /** Strip of `count` xy vertices starting at vertex `start` of `buf`, no per-vertex channels. */
@@ -179,9 +319,11 @@ export function drawPoints(r: GLRenderer, store: XYStore, maps: XYMaps, st: Poin
     for (const p of store.parts(ch, s, e, false)) {
       const g = p.gpu
       const k = p.start
-      r.resetAttribs(keep)
+      const xl = xlOf(g, ch, maps, r.dpr)
+      r.resetAttribs(xl ? [...keep, ATTR.xl0] : keep)
       r.attrib(ATTR.corner, r.cornerBuffer('point'), 2, gl.FLOAT, false, 0, 0, 0)
       r.attrib(ATTR.p0, g.xy!.buf, 2, gl.FLOAT, false, 8, k * 8, 1)
+      if (xl) r.attrib(ATTR.xl0, xl, 1, gl.FLOAT, false, 4, k * 4, 1)
       if (usesColor) r.attrib(ATTR.c0, g.color!.buf, 4, gl.UNSIGNED_BYTE, true, 4, k * 4, 1)
       if (usesValue) r.attrib(ATTR.v0, g.value!.buf, 1, gl.FLOAT, false, 4, k * 4, 1)
       if (usesSize) r.attrib(ATTR.size, g.size!.buf, 1, gl.FLOAT, false, 4, k * 4, 1)
@@ -203,18 +345,26 @@ export function drawArea(r: GLRenderer, store: XYStore, maps: XYMaps, st: AreaDr
   const gl = r.gl
   const prog = r.program('area', S.AREA_VS, S.AREA_FS)
   const hasLo = store.channels.has('lo')
+  let cutBuf: WebGLBuffer | null = null
   store.forVisible(maps.x0, maps.x1, (ch, ci) => {
     const [s, e] = store.visibleRange(ch, ci, maps.x0, maps.x1, false)
     if (e - s < 2) return
     store.sync(r, ch)
     chunkSetup(r, prog, maps, ch)
     r.useFill(prog, { color: st.color, fill: st.fill, rect: st.rect } as FillParams)
-    const quads = (xy: WebGLBuffer, lo: WebGLBuffer | null, start: number, count: number) => {
+    const quads = (xy: WebGLBuffer, lo: WebGLBuffer | null, start: number, count: number, xl: WebGLBuffer | null = null) => {
       if (count < 2) return
-      r.resetAttribs(lo ? [ATTR.corner, ATTR.p0, ATTR.p1, ATTR.lo0, ATTR.lo1] : [ATTR.corner, ATTR.p0, ATTR.p1])
+      const keep: number[] = [ATTR.corner, ATTR.p0, ATTR.p1]
+      if (lo) keep.push(ATTR.lo0, ATTR.lo1)
+      if (xl) keep.push(ATTR.xl0, ATTR.xl1)
+      r.resetAttribs(keep)
       r.attrib(ATTR.corner, r.cornerBuffer('quad'), 2, gl.FLOAT, false, 0, 0, 0)
       r.attrib(ATTR.p0, xy, 2, gl.FLOAT, false, 8, start * 8, 1)
       r.attrib(ATTR.p1, xy, 2, gl.FLOAT, false, 8, (start + 1) * 8, 1)
+      if (xl) {
+        r.attrib(ATTR.xl0, xl, 1, gl.FLOAT, false, 4, start * 4, 1)
+        r.attrib(ATTR.xl1, xl, 1, gl.FLOAT, false, 4, (start + 1) * 4, 1)
+      }
       if (lo) {
         r.attrib(ATTR.lo0, lo, 1, gl.FLOAT, false, 4, start * 4, 1)
         r.attrib(ATTR.lo1, lo, 1, gl.FLOAT, false, 4, (start + 1) * 4, 1)
@@ -230,8 +380,35 @@ export function drawArea(r: GLRenderer, store: XYStore, maps: XYMaps, st: AreaDr
       for (const p of store.parts(ch, Math.max(s, plan.tail), e, true)) quads(p.gpu.xy!.buf, null, p.start, p.count)
       return
     }
-    for (const p of store.parts(ch, s, e, true)) quads(p.gpu.xy!.buf, hasLo ? p.gpu.lo!.buf : null, p.start, p.count)
+    const far = splitFar(store, ch, s, e, maps, r, 2, true)
+    for (const p of store.parts(ch, far.s, far.e, true)) quads(p.gpu.xy!.buf, hasLo ? p.gpu.lo!.buf : null, p.start, p.count, xlOf(p.gpu, ch, maps, r.dpr))
+    if (!far.cuts.length) return
+    // Far boundary quads (see splitFar), origin at the clipped start. Layout: xy 0-15, lo 16-23.
+    cutBuf ??= gl.createBuffer()!
+    const f = new Float32Array(6)
+    for (const c of far.cuts) {
+      const loAt = (t: number) => {
+        if (!hasLo) return st.baseline
+        const a = axisPx(maps.my, ch.lo![c.i] + ch.oy, r.dpr), b = axisPx(maps.my, ch.lo![c.i + 1] + ch.oy, r.dpr)
+        return pxAxis(maps.my, lerp(a, b, t), r.dpr)
+      }
+      r.useXform(prog, makeXform(maps.mx, maps.my, c.x0, c.y0, r.dpr))
+      f.set([0, 0, c.x1 - c.x0, c.y1 - c.y0, loAt(c.t0) - c.y0, loAt(c.t1) - c.y0])
+      gl.bindBuffer(gl.ARRAY_BUFFER, cutBuf)
+      gl.bufferData(gl.ARRAY_BUFFER, f, gl.STREAM_DRAW)
+      r.resetAttribs([ATTR.corner, ATTR.p0, ATTR.p1, ATTR.lo0, ATTR.lo1])
+      r.attrib(ATTR.corner, r.cornerBuffer('quad'), 2, gl.FLOAT, false, 0, 0, 0)
+      r.attrib(ATTR.p0, cutBuf, 2, gl.FLOAT, false, 8, 0, 1)
+      r.attrib(ATTR.p1, cutBuf, 2, gl.FLOAT, false, 8, 8, 1)
+      r.attrib(ATTR.lo0, cutBuf, 1, gl.FLOAT, false, 4, 16, 1)
+      r.attrib(ATTR.lo1, cutBuf, 1, gl.FLOAT, false, 4, 20, 1)
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1)
+    }
   })
+  if (cutBuf) {
+    r.resetAttribs([])
+    gl.deleteBuffer(cutBuf)
+  }
 }
 
 /**

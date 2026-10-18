@@ -2,6 +2,9 @@
 // node16 / nodenext: ESM requires explicit extensions on relative specifiers.
 //   './lc'        -> './lc.js'
 //   './chart3d'   -> './chart3d/index.js'   (directory import)
+// Then mirror every X.d.ts as X.d.cts (specifiers './lc.cjs'): the package is
+// "type": "module", so .d.ts files are ESM declarations, and CommonJS consumers
+// (the "require" condition) need CommonJS ones.
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 
@@ -38,9 +41,11 @@ for (const file of files) {
     writeFileSync(file, out)
     changed++
   }
+  const cjs = out.replace(spec, (m, pre, q, s) => `${pre}${q}${s.replace(/\.js$/, '.cjs')}${q}`)
+  writeFileSync(file.replace(/\.d\.ts$/, '.d.cts'), cjs)
 }
 if (unresolved.length) {
   console.error(`fix-dts: unresolved specifiers:\n  ${unresolved.join('\n  ')}`)
   process.exit(1)
 }
-console.log(`fix-dts: rewrote relative imports in ${changed} of ${files.length} declaration files`)
+console.log(`fix-dts: rewrote relative imports in ${changed} of ${files.length} declaration files, wrote ${files.length} .d.cts`)

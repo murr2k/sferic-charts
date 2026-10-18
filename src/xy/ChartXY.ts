@@ -222,7 +222,14 @@ export class ChartXY extends Panel {
   /** Alias. */
   addCandlestickSeries(o: OHLCSeriesOptions = {}) { return this.addOHLCSeries(o) }
   /** @internal */
-  maxTextureSize() { return getRenderer().maxTextureSize }
+  /** GPU texture size limit; 4096 (supported by WebGL2 implementations in practice) when no GPU context exists. */
+  maxTextureSize() {
+    try {
+      return getRenderer().maxTextureSize
+    } catch {
+      return 4096
+    }
+  }
   /** @internal */
   renderer() { return getRenderer() }
 

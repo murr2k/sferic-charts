@@ -5,6 +5,8 @@
 // 3. GPU memory: the shared context is released after the last chart is disposed,
 //    and oversized render targets shrink when charts get smaller.
 // 4. Accessibility: the canvas exposes the chart title as its label.
+// 5. Deep-zoom precision: marks and long segments far from their chunk origin land
+//    where the float64 axis mapping says (tests/fixtures/precision.html).
 import { BASE, checkServer, launch, openGallery, showExample } from './harness.mjs'
 
 await checkServer()
@@ -83,11 +85,42 @@ async function diff(page, a, b) {
 {
   const browser = await launch({ width: 1280, height: 800, extraArgs: ['--disable-webgl', '--disable-webgl2', '--disable-3d-apis'] })
   const page = await openGallery(browser, 'storm')
-  for (const id of ['pie-chart', 'line-series', 'pie-gauge-dashboard']) {
+  for (const id of ['pie-chart', 'line-series', 'pie-gauge-dashboard', 'heatmap-grid']) {
     await showExample(page, id, 1500)
     const state = await page.evaluate(() => ({ glError: window.__sfericDebug.glError(), frames: window.__sfericDebug.stats.frames }))
     const errs = page.__errors.filter((e) => !/WebGL2 unavailable/.test(e))
     ok(`no WebGL: ${id} renders without exceptions`, state.frames > 0 && !errs.length, `${state.glError ? 'GL disabled; ' : ''}frames ${state.frames}${errs.length ? `; ${errs[0].slice(0, 120)}` : ''}`)
+  }
+  await browser.close()
+}
+
+// ---------------------------------------------------------------- 5. deep-zoom precision
+{
+  const browser = await launch({ width: 1000, height: 600 })
+  const page = await browser.newPage()
+  await page.goto(`${BASE}/tests/fixtures/precision.html`, { waitUntil: 'load' })
+  await page.waitForFunction(() => window.__precisionReady)
+  const run = (kind, a) => page.evaluate((kind, a) => window.__precision[kind](a), kind, a)
+  // Each far case against the same geometry close to its origin (pixel-centre offsets cancel).
+  const cases = [
+    ['point', 'origin 1e10 px away', { origin: 0, X: 1048576.5, k: 1e4 }, { origin: 1048575.5, X: 1048576.5, k: 1e4 }],
+    // X - origin not representable in float32 (stored as a high and a low word).
+    ['point', 'inexact x, origin 1e10 px away', { origin: 0, X: 1048576.3, k: 1e4 }, { origin: 1048575.3, X: 1048576.3, k: 1e4 }],
+    ['point', 'inexact epoch-ms x, 1-hour chunk at 1 µs/px', { origin: 1.7e12, X: 1.7e12 + 3600000.1234, k: 1e3 }, { origin: 1.7e12 + 3599999.1234, X: 1.7e12 + 3600000.1234, k: 1e3 }],
+    ...['line', 'prim', 'area'].map((style) => [
+      'vline', `inexact x, ${style}, origin 1e10 px away`,
+      { origin: 0, X: 1048576.3, k: 1e4, style }, { origin: 1048575.3, X: 1048576.3, k: 1e4, style },
+    ]),
+    ['segment', 'endpoints 1e10 px off, slope 0.37', { L: 1e7, k: 1e3 }, { L: 0.3, k: 1e3 }],
+    ['segment', 'endpoints 1e11 px off, slope 3', { L: 1e8, k: 1e3, slope: 3 }, { L: 0.3, k: 1e3, slope: 3 }],
+    ['segment', 'endpoints 1e11 px off, flat', { L: 1e8, k: 1e3, slope: 0 }, { L: 0.3, k: 1e3, slope: 0 }],
+    ['area', 'edge endpoints 1e6 px off', { L: 1e3, k: 1e3 }, { L: 0.3, k: 1e3 }],
+    ['area', 'edge endpoints 1e10 px off', { L: 1e7, k: 1e3 }, { L: 0.3, k: 1e3 }],
+  ]
+  for (const [kind, what, far, near] of cases) {
+    const f = await run(kind, far), n = await run(kind, near)
+    const d = f.drawn && n.drawn && f.err !== null && n.err !== null ? Math.abs(f.err - n.err) : Infinity
+    ok(`deep zoom: ${kind} with ${what}`, d < 1, Number.isFinite(d) ? `${d.toFixed(2)} px from reference` : 'not drawn')
   }
   await browser.close()
 }

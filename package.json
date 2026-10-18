@@ -1,6 +1,6 @@
 {
   "name": "sferic-charts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GPU-accelerated WebGL2 charting library for the browser: real-time, large-data, 3D and dashboard charts",
   "keywords": [
     "chart",
@@ -17,6 +17,10 @@
   ],
   "author": "Murray Kopit",
   "license": "MIT",
+  "homepage": "https://github.com/murr2k/sferic-charts#readme",
+  "bugs": {
+    "url": "https://github.com/murr2k/sferic-charts/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/murr2k/sferic-charts.git"
@@ -27,16 +31,20 @@
   "types": "dist/types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/sferic.js",
-      "require": "./dist/sferic.umd.cjs"
+      "import": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/sferic.js"
+      },
+      "require": {
+        "types": "./dist/types/index.d.cts",
+        "default": "./dist/sferic.umd.cjs"
+      }
     }
   },
   "files": [
     "dist"
   ],
   "sideEffects": false,
-  "private": true,
   "scripts": {
     "dev": "vite",
     "build": "vite build",
