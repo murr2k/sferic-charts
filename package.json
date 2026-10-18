@@ -1,6 +1,6 @@
 {
   "name": "sferic-charts",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "GPU-accelerated WebGL2 charting library for the browser: real-time, large-data, 3D and dashboard charts",
   "keywords": [
     "chart",

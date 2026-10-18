@@ -6,6 +6,11 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-17
+
+No library changes: the first release published from GitHub Actions, with npm
+provenance.
+
 ### Added
 
 - Release workflow (`.github/workflows/release.yml`): pushing a `vX.Y.Z` tag publishes
@@ -112,6 +117,7 @@ First release.
 - Headless verification tooling: `npm run snap`, `npm run bench`, and diagnostic
   scripts for GL call counts, CPU profiles and GPU stall experiments.
 
-[Unreleased]: https://github.com/murr2k/sferic-charts/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/murr2k/sferic-charts/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/murr2k/sferic-charts/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/murr2k/sferic-charts/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/murr2k/sferic-charts/releases/tag/v0.1.0
