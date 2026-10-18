@@ -182,6 +182,11 @@ npm run verify:package   # pack, install into a clean project, check imports and
 `prepublishOnly` runs typecheck, tests, the library build and `verify:package`, so a
 broken or stale build cannot be published.
 
+Releases publish from GitHub Actions: bump `version` in `package.json`, move the
+CHANGELOG's `[Unreleased]` entries under the new version, commit, then push a `vX.Y.Z`
+tag. The release workflow runs the same gate and publishes with npm trusted publishing
+(no stored token, with a provenance attestation).
+
 `snap` and `bench` drive your installed Chrome or Edge through puppeteer-core and need
 the dev server running. Gallery examples live in `gallery/examples/`, one file each,
 and are discovered automatically.

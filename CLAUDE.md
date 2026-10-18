@@ -36,6 +36,10 @@ node scripts/profile.mjs <id> [s]     # CPU profile, self time by function
 node scripts/gpu-experiment.mjs <id> bufferSubData   # stub a GL call, compare frame time
 ```
 
+Release: bump `package.json` version, move CHANGELOG `[Unreleased]` under it, commit,
+`git tag -a vX.Y.Z` and push the tag. `.github/workflows/release.yml` publishes through
+npm trusted publishing (OIDC, provenance); Actions > Release > Run workflow is a dry run.
+
 Reference numbers (`npm run bench`: GPU-synced cost per rendered frame, Intel Arc
 iGPU, 1920x1080): 100-chart streaming dashboard ~9 ms, 10M-point line zoom ~4.3 ms,
 1M scatter pan ~11.5 ms (GPU-bound), streaming/heatmap ~3.2 ms. `gl.finish()` does

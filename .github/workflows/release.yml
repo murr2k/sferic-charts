@@ -1,0 +1,44 @@
+# Publish to npm when a version tag (v1.2.3) is pushed. Authenticates with npm
+# trusted publishing (OIDC), so no npm token is stored anywhere, and npm attaches a
+# provenance attestation to the published version. Trust is configured on the npm
+# side with:
+#   npm trust github sferic-charts --file release.yml --repo murr2k/sferic-charts --allow-publish
+# Run it manually (Actions tab, Run workflow) for a dry run of the same gate.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 bundles npm 10.
+      - run: npm install -g npm@11
+      - run: npm ci
+      - name: Check the tag matches package.json
+        if: github.ref_type == 'tag'
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $v"
+            exit 1
+          fi
+      # prepublishOnly runs typecheck, tests, the library build and verify:package.
+      - name: Publish
+        if: github.ref_type == 'tag'
+        run: npm publish
+      - name: Dry run
+        if: github.ref_type != 'tag'
+        run: npm run prepublishOnly && npm publish --dry-run --ignore-scripts

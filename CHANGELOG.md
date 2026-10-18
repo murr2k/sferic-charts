@@ -6,6 +6,12 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Release workflow (`.github/workflows/release.yml`): pushing a `vX.Y.Z` tag publishes
+  to npm from GitHub Actions with trusted publishing and provenance; a manual run is a
+  dry run of the same gate.
+
 ## [0.2.0] - 2026-10-17
 
 ### Fixed
