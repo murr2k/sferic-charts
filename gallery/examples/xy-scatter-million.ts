@@ -17,7 +17,8 @@ export default {
     const xs = new Float64Array(N)
     const ys = new Float64Array(N)
     const colors = new Uint32Array(N)
-    const lut = Array.from({ length: 360 }, (_, h) => ColorHSV(h, 0.55, 1).toUint32())
+    // Translucent, so a million overlapping points build up density instead of saturating.
+    const lut = Array.from({ length: 360 }, (_, h) => ColorHSV(h, 0.75, 1).setA(theme.isDark ? 55 : 80).toUint32())
     for (let i = 0; i < N; i++) {
       // Spiral galaxy: arms + gaussian scatter
       const arm = i % 3

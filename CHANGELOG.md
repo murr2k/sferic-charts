@@ -6,6 +6,13 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Per-point and per-vertex colors (`colors` in `appendSamples` / `setSamples`) are drawn
+  as given. They were multiplied by the series' own color, so a 1M-point rainbow scatter
+  came out tinted by the first palette slot and a pink point on an amber series turned
+  orange.
+
 ## [0.2.1] - 2026-10-17
 
 No library changes: the first release published from GitHub Actions, with npm
