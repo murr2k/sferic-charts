@@ -7,6 +7,16 @@ import { Bounds, XYStore, Chunk, BLOCK } from '../store'
 import type { Axis } from '../Axis'
 import type { ChartXY } from '../ChartXY'
 
+/**
+ * Extra result-table values (intensities, lookup values) are not axis coordinates, so they
+ * are not formatted by an axis (whose cursor decimals follow the zoom): up to 6 significant
+ * digits, no padding.
+ */
+const formatExtra = (v: number) => {
+  const a = Math.abs(v)
+  return a !== 0 && (a < 1e-4 || a >= 1e9) ? v.toExponential(3) : String(Number(v.toPrecision(6)))
+}
+
 export interface CursorHit {
   series: SeriesXY
   x: number
@@ -111,7 +121,7 @@ export abstract class SeriesXY extends Emitter implements LegendTarget {
     const rows: ResultTableRows = [[{ text: this.name, color: hit.color }]]
     rows.push([(this.axisX.title || 'X') + ':', this.axisX.formatCursor(hit.x)])
     rows.push([(this.axisY.title || 'Y') + ':', this.axisY.formatCursor(hit.y)])
-    if (hit.extra) for (const [k, v] of Object.entries(hit.extra)) rows.push([k + ':', typeof v === 'number' ? this.axisY.formatCursor(v) : v])
+    if (hit.extra) for (const [k, v] of Object.entries(hit.extra)) rows.push([k + ':', typeof v === 'number' ? formatExtra(v) : v])
     return rows
   }
 }

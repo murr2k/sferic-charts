@@ -12,6 +12,12 @@ All notable changes to Sferic Charts are documented here. The format follows
   as given. They were multiplied by the series' own color, so a 1M-point rainbow scatter
   came out tinted by the first palette slot and a pink point on an amber series turned
   orange.
+- Numeric axis labels and cursor readouts keep enough decimals at extreme zoom (up to 16).
+  Labels were capped at 12 decimals and the cursor at 10, so below a 1e-12 tick step
+  neighbouring labels were identical.
+- Extra values in cursor result tables (heatmap intensity, lookup values) are shown with
+  up to 6 significant digits. They were formatted by the Y axis, so they picked up its
+  zoom-dependent decimals and trailing zeros.
 
 ### Added
 
