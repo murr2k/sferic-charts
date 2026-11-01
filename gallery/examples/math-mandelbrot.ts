@@ -88,6 +88,9 @@ export default {
     const chart = sferic().ChartXY({ container, theme, legend: { visible: false } }).setTitle('Mandelbrot set')
     chart.axisX.setTitle('Re c').setInterval({ start: HOME.x0, end: HOME.x1, stopAxisAfter: true }).setDefaultInterval({ start: HOME.x0, end: HOME.x1 })
     chart.axisY.setTitle('Im c').setInterval({ start: HOME.y0, end: HOME.y1, stopAxisAfter: true }).setDefaultInterval({ start: HOME.y0, end: HOME.y1 })
+    // Reserve room for deep-zoom tick labels (0.131825904203...), so the plot keeps its size,
+    // and with it its aspect ratio, as the labels grow while zooming in.
+    chart.axisY.setThickness({ min: 132 })
 
     // Grid resolution follows the container (about one cell per CSS pixel, capped).
     const w = Math.max(320, container.clientWidth || 960), h = Math.max(200, container.clientHeight || 600)
@@ -185,41 +188,115 @@ export default {
       }
     }
 
+    // ---- Aspect ratio: one data unit per pixel scale on both axes, so the set is never stretched.
+    const currentView = (): View => {
+      const x = chart.axisX.getInterval(), y = chart.axisY.getInterval()
+      return { x0: x.start, x1: x.end, y0: y.start, y1: y.end }
+    }
+    const plotPx = () => {
+      const x = chart.axisX.getInterval(), y = chart.axisY.getInterval()
+      const w = Math.abs(chart.axisX.valueToPx(x.end) - chart.axisX.valueToPx(x.start))
+      const h = Math.abs(chart.axisY.valueToPx(y.end) - chart.axisY.valueToPx(y.start))
+      return w > 10 && h > 10 ? { w, h } : null // null until the chart has been laid out
+    }
+    /** The same region at one scale on both axes, centered, keeping all of it in view; `v` itself if already square. */
+    const fitted = (v: View): View | null => {
+      const px = plotPx()
+      if (!px) return null
+      const sx = Math.abs(v.x1 - v.x0) / px.w, sy = Math.abs(v.y1 - v.y0) / px.h
+      if (Math.abs(sx / sy - 1) < 1e-3) return v
+      const s = Math.max(sx, sy), cx = (v.x0 + v.x1) / 2, cy = (v.y0 + v.y1) / 2
+      return { x0: cx - (s * px.w) / 2, x1: cx + (s * px.w) / 2, y0: cy - (s * px.h) / 2, y1: cy + (s * px.h) / 2 }
+    }
+    const apply = (v: View, animate: number | false) => {
+      chart.axisX.setInterval({ start: v.x0, end: v.x1, stopAxisAfter: true, animate })
+      chart.axisY.setInterval({ start: v.y0, end: v.y1, stopAxisAfter: true, animate })
+    }
+
     // Coalesce the X and Y interval changes of one frame into one view. While the view keeps
     // moving, a new job waits until the current one has shown its preview, so previews keep
     // arriving during a zoom instead of every job being cancelled before it shows anything.
+    // Zooming to a drawn rectangle, zooming one axis or resizing can leave the axes at
+    // different scales; once the view has been still for a moment it is eased back to one
+    // scale. (Correcting sooner would cut short the library's rectangle-zoom animation.)
     let raf = 0
+    let fixTimer = 0
+    let ready = false
+    let quiet = false // set while the first fit changes the axes, so that change starts no extra job
+    const frame = () => {
+      raf = 0
+      const view = currentView()
+      if (!ready) {
+        // First layout: fit the home view to the plot before anything is drawn, and make
+        // that the view a double-click returns to.
+        const f = fitted(view)
+        if (!f) {
+          raf = requestAnimationFrame(frame)
+          return
+        }
+        quiet = true
+        chart.axisX.setDefaultInterval({ start: f.x0, end: f.x1 })
+        chart.axisY.setDefaultInterval({ start: f.y0, end: f.y1 })
+        if (f !== view) apply(f, false)
+        quiet = false
+        ready = true
+        start(f)
+        return
+      }
+      // The library stops zooming an axis once its interval nears float64 resolution, so
+      // past about 10¹² the X axis (|Re c| ≈ 0.74) stops before Y (|Im c| ≈ 0.13). Square the
+      // view at once there, so zooming simply stops at the limit instead of stretching.
+      const atFloor = (a: number, b: number) => Math.abs(b - a) < Math.max(Math.abs(a), Math.abs(b)) * 1.5e-12
+      let view2 = view
+      if (atFloor(view.x0, view.x1) || atFloor(view.y0, view.y1)) {
+        const f = fitted(view)
+        if (f && f !== view) {
+          quiet = true
+          apply(f, false)
+          quiet = false
+          view2 = f
+        }
+      }
+      if (job && !job.shown) pending = view2
+      else start(view2)
+    }
+    const fixAspect = () => {
+      const v = currentView()
+      const f = ready ? fitted(v) : null
+      if (f && f !== v) apply(f, 220)
+    }
     const request = () => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        const x = chart.axisX.getInterval(), y = chart.axisY.getInterval()
-        const view = { x0: x.start, x1: x.end, y0: y.start, y1: y.end }
-        if (job && !job.shown) pending = view
-        else start(view)
-      })
+      if (quiet) return
+      clearTimeout(fixTimer)
+      fixTimer = window.setTimeout(fixAspect, 120)
+      if (!raf) raf = requestAnimationFrame(frame)
     }
     chart.axisX.addEventListener('intervalchange', request)
     chart.axisY.addEventListener('intervalchange', request)
     ctx.onParamChange?.(request)
+    const resize = new ResizeObserver(request)
+    resize.observe(container)
 
+    /** Animate to a region centered on (cx, cy) and `width` wide; its height follows the plot's aspect. */
     const goto = (cx: number, cy: number, width: number) => {
-      const height = (width * (HOME.y1 - HOME.y0)) / (HOME.x1 - HOME.x0)
-      chart.axisX.setInterval({ start: cx - width / 2, end: cx + width / 2, stopAxisAfter: true, animate: 900 })
-      chart.axisY.setInterval({ start: cy - height / 2, end: cy + height / 2, stopAxisAfter: true, animate: 900 })
+      const px = plotPx()
+      const height = px ? (width * px.h) / px.w : (width * (HOME.y1 - HOME.y0)) / (HOME.x1 - HOME.x0)
+      apply({ x0: cx - width / 2, x1: cx + width / 2, y0: cy - height / 2, y1: cy + height / 2 }, 900)
     }
     const buttons = [
-      { label: 'Full set', go: () => goto((HOME.x0 + HOME.x1) / 2, 0, HOME.x1 - HOME.x0) },
+      { label: 'Full set', go: () => apply(fitted({ ...HOME }) ?? HOME, 900) },
       ...PRESETS.map((q) => ({ label: q.name, go: () => goto(q.cx, q.cy, q.w) })),
     ]
     // Stacked in the plot's top-left corner, which the set itself never reaches.
     buttons.forEach((b, i) => {
       chart.addUIElement('button').setText(b.label).setPosition({ x: 9, y: 89 - i * 7 }).setOrigin({ x: -1, y: 1 }).addEventListener('click', b.go)
     })
-    start({ ...HOME })
+    request()
 
     return () => {
       cancelAnimationFrame(raf)
+      clearTimeout(fixTimer)
+      resize.disconnect()
       pool.forEach((wk) => wk.terminate())
       URL.revokeObjectURL(url)
       chart.dispose()
