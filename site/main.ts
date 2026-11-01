@@ -329,7 +329,7 @@ dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
   const tabs = $('#usage-tabs')
   const ta = $<HTMLTextAreaElement>('#editor-input')
   const hl = $('#editor-hl code')
-  const hlPre = $('#editor-hl')
+  const scroller = $('.editor')
   const err = $('#editor-error')
   const title = $('#usage-title')
   const summary = $('#usage-summary')
@@ -337,7 +337,37 @@ dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
   let current = snippets[0]
   let pendingRun = 0
 
-  const paint = () => { hl.innerHTML = highlight(ta.value) + '\n' }
+  // The editor is a transparent textarea (caret, selection, input) over the highlighted text.
+  // The highlighted <pre> sets the size of both, the textarea never scrolls itself, and one
+  // outer element (.editor) scrolls the pair, so the two layers cannot drift apart.
+  // The extra line and right padding leave room for the next keystroke before the repaint.
+  const paint = () => {
+    hl.innerHTML = highlight(ta.value) + '\n '
+    if (ta.scrollLeft || ta.scrollTop) {
+      ta.scrollLeft = 0
+      ta.scrollTop = 0
+    }
+  }
+  let cell: { w: number; h: number; left: number; top: number } | null = null
+  const measureCell = () => {
+    const cs = getComputedStyle(ta)
+    const g = document.createElement('canvas').getContext('2d')!
+    g.font = `${cs.fontSize} ${cs.fontFamily}`
+    return { w: g.measureText('0'.repeat(50)).width / 50, h: parseFloat(cs.lineHeight), left: parseFloat(cs.paddingLeft), top: parseFloat(cs.paddingTop) }
+  }
+  /** Scroll the editor so the caret stays in view. */
+  const followCaret = () => {
+    cell ??= measureCell()
+    const before = ta.value.slice(0, ta.selectionEnd)
+    const line = (before.match(/\n/g) ?? []).length
+    const col = before.length - before.lastIndexOf('\n') - 1
+    const x = cell.left + col * cell.w, y = cell.top + line * cell.h
+    const m = 2 * cell.w
+    if (x < scroller.scrollLeft + m) scroller.scrollLeft = Math.max(0, x - 4 * cell.w)
+    else if (x > scroller.scrollLeft + scroller.clientWidth - m) scroller.scrollLeft = x - scroller.clientWidth + 4 * cell.w
+    if (y < scroller.scrollTop) scroller.scrollTop = Math.max(0, y - cell.h)
+    else if (y + cell.h > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = y + 2 * cell.h - scroller.clientHeight
+  }
   const setError = (e: unknown) => {
     err.hidden = !e
     err.textContent = e ? `${(e as Error).name ?? 'Error'}: ${(e as Error).message ?? e}` : ''
@@ -373,7 +403,8 @@ dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
     summary.textContent = s.summary
     ta.value = edits.get(s.id) ?? s.code
     paint()
-    ta.scrollTop = 0
+    scroller.scrollTop = 0
+    scroller.scrollLeft = 0
     setError(null)
     // Off-screen, the observer starts the preview when it scrolls into view.
     if (live.running) rerun()
@@ -387,13 +418,27 @@ dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
   }
   ta.addEventListener('input', () => {
     paint()
+    followCaret()
     edits.set(current.id, ta.value)
     clearTimeout(pendingRun)
     pendingRun = window.setTimeout(rerun, 900)
   })
+  // If the browser scrolls the textarea itself (a paste wider than the slack), undo that and
+  // scroll the outer element instead, so the layers stay aligned.
   ta.addEventListener('scroll', () => {
-    hlPre.scrollTop = ta.scrollTop
-    hlPre.scrollLeft = ta.scrollLeft
+    if (!ta.scrollLeft && !ta.scrollTop) return
+    ta.scrollLeft = 0
+    ta.scrollTop = 0
+    followCaret()
+  })
+  // Follow caret moves made with the keyboard only. selectionchange arrives asynchronously,
+  // sometimes after the mouse button is released, and scrolling after a click would shift
+  // the text the reader just clicked into.
+  let keyboardCaret = false
+  ta.addEventListener('keydown', () => { keyboardCaret = true })
+  ta.addEventListener('pointerdown', () => { keyboardCaret = false })
+  document.addEventListener('selectionchange', () => {
+    if (keyboardCaret && document.activeElement === ta) followCaret()
   })
   ta.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
