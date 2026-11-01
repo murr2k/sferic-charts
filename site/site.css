@@ -177,6 +177,32 @@ h1 { margin: 0 0 18px; font-size: clamp(34px, 5.2vw, 58px); line-height: 1.06; l
   box-shadow: 0 10px 40px -10px var(--accent);
 }
 .stage.running .run-overlay { display: none; }
+/* Scrolling past charts (see engageable() in main.ts). The library sets touch-action: none
+   on its root element; idle charts let vertical swipes scroll the page instead. */
+.stage:not(.engaged) .host > div { touch-action: pan-y !important; }
+.stage.engaged { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -2px; }
+.wheel-hint {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; pointer-events: none;
+  padding: 7px 12px; border-radius: 8px; white-space: nowrap; font-size: 13px; color: var(--text);
+  background: color-mix(in srgb, var(--bg) 85%, transparent); border: 1px solid var(--line);
+  opacity: 0; transition: opacity 0.2s;
+}
+.wheel-hint.show { opacity: 1; }
+
+/* Example parameters (sliders) */
+.params { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; padding: 11px 16px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.hero-figure .params { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.param { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.param-name { color: var(--muted); white-space: nowrap; }
+.param input[type="range"] { width: 150px; accent-color: var(--accent); cursor: pointer; }
+.param output { font: 12.5px var(--mono); min-width: 64px; color: var(--text); }
+.param-reset {
+  margin-left: auto; font: 600 12.5px var(--font); color: var(--text); background: transparent; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px;
+}
+.param-reset:hover { border-color: var(--accent); }
+@media (max-width: 600px) { .param input[type="range"] { width: 120px; } }
+
 .stage-error { position: absolute; inset: 0; margin: 0; padding: 16px; overflow: auto; color: #ff8a8a; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; z-index: 3; }
 
 /* Sections and cards */
@@ -184,6 +210,7 @@ h1 { margin: 0 0 18px; font-size: clamp(34px, 5.2vw, 58px); line-height: 1.06; l
 .section-head { max-width: 800px; margin-bottom: 28px; }
 h2 { margin: 0 0 12px; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.15; letter-spacing: -0.6px; font-weight: 720; }
 .section-head p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: 16.5px; }
+.section-head p.tip { margin-top: 12px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; font-size: 14.5px; }
 .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
 .card.wide { grid-column: 1 / -1; }

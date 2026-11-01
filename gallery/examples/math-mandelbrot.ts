@@ -1,5 +1,10 @@
 import { sferic, LUT, PalettedFill, ColorHEX } from '../../src'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
+
+const PARAMS: ExampleParam[] = [
+  { key: 'iter', label: 'Iteration budget', min: 0.25, max: 4, step: 0.25, value: 1, format: (v) => `${v}×` },
+  { key: 'res', label: 'Cells per pixel', min: 0.3, max: 1.5, step: 0.1, value: 0.9, restart: true },
+]
 
 const HOME = { x0: -2.55, x1: 1.05, y0: -1.2, y1: 1.2 }
 const PRESETS = [
@@ -41,17 +46,20 @@ export default {
   category: 'Physics & Math',
   order: 3,
   tags: ['math', 'fractal', 'heatmap', 'precision', 'web worker'],
+  params: PARAMS,
   description:
     'The Mandelbrot set as a heatmap that is recomputed for the visible region after every zoom or pan (escape-time iterations in a Web Worker, smooth coloring). Wheel to zoom, drag a rectangle, or take a preset down to 10¹⁰× magnification: the heatmap is positioned in float64 relative to its own origin, so it stays registered with the axes until double-precision arithmetic itself runs out near 10¹³×.',
-  run({ container, theme }) {
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
     const chart = sferic().ChartXY({ container, theme, legend: { visible: false } }).setTitle('Mandelbrot set')
     chart.axisX.setTitle('Re c').setInterval({ start: HOME.x0, end: HOME.x1, stopAxisAfter: true }).setDefaultInterval({ start: HOME.x0, end: HOME.x1 })
     chart.axisY.setTitle('Im c').setInterval({ start: HOME.y0, end: HOME.y1, stopAxisAfter: true }).setDefaultInterval({ start: HOME.y0, end: HOME.y1 })
 
     // Grid resolution follows the container (about one cell per CSS pixel, capped).
     const w = Math.max(320, container.clientWidth || 960), h = Math.max(200, container.clientHeight || 600)
-    const cols = Math.min(1100, Math.round(w * 0.9))
-    const rows = Math.min(800, Math.round((cols * h) / w))
+    const cols = Math.min(1600, Math.round(w * p.res))
+    const rows = Math.min(1200, Math.round((cols * h) / w))
 
     const pal = theme.examples.intensityColorPalette
     const inside = ColorHEX(theme.isDark ? '#000000' : '#0b0d12')
@@ -74,7 +82,7 @@ export default {
     let sent = { ...HOME }
     let t0 = 0
 
-    const iterationsFor = (width: number) => Math.round(Math.min(4000, 160 + 70 * Math.max(0, Math.log2(3.6 / width))))
+    const iterationsFor = (width: number) => Math.round(p.iter * Math.min(4000, 160 + 70 * Math.max(0, Math.log2(3.6 / width))))
     const describe = (v: typeof view, ms: number) => {
       const zoom = 3.6 / Math.abs(v.x1 - v.x0)
       const sup = (s: string) => s.replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d])
@@ -107,6 +115,7 @@ export default {
     }
     chart.axisX.addEventListener('intervalchange', request)
     chart.axisY.addEventListener('intervalchange', request)
+    ctx.onParamChange?.(request)
 
     const goto = (cx: number, cy: number, width: number) => {
       const height = (width * (HOME.y1 - HOME.y0)) / (HOME.x1 - HOME.x0)

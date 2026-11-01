@@ -1,10 +1,12 @@
 import { sferic, SolidFill, RectangleFigure } from '../../src'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
 
 const SAMPLES = 2400
-const NMAX = 45
-const STEP_MS = 320
 const HOLD_MS = 2200
+const PARAMS: ExampleParam[] = [
+  { key: 'nmax', label: 'Highest harmonic', min: 5, max: 151, step: 2, value: 45, restart: true },
+  { key: 'stepMs', label: 'Time per term', min: 40, max: 1000, step: 20, value: 320, format: (v) => `${v} ms` },
+]
 
 const frac = (t: number) => t - Math.floor(t)
 
@@ -32,9 +34,13 @@ export default {
   category: 'Physics & Math',
   order: 1,
   tags: ['math', 'fourier', 'animation', 'rectangles'],
+  params: PARAMS,
   description:
     'Partial sums of the Fourier sine series of a square, sawtooth and triangle wave, adding one harmonic at a time. Near a jump the partial sums overshoot by about 9 % of the jump however many terms are added (the Gibbs phenomenon; the title reports the overshoot as a share of the jump); the continuous triangle wave converges without it. The lower chart shows the coefficient magnitudes |bₙ| with the terms used so far highlighted.',
-  run({ container, theme }) {
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
+    const NMAX = p.nmax
     const dash = sferic().Dashboard({ container, theme, numberOfColumns: 1, numberOfRows: 2 })
     dash.setRowHeight(0, 2.2).setRowHeight(1, 1)
 
@@ -58,7 +64,8 @@ export default {
     const on = new SolidFill({ color: theme.seriesColors[0] })
     const off = new SolidFill({ color: theme.axisLineColor.setA(70) })
     const figs: RectangleFigure[] = []
-    for (let n = 1; n <= NMAX; n++) figs.push(bars.add({ x1: n - 0.34, y1: 0, x2: n + 0.34, y2: 0 }).setFillStyle(off))
+    const barW = Math.min(0.34, 0.34 * (45 / NMAX) + 0.1)
+    for (let n = 1; n <= NMAX; n++) figs.push(bars.add({ x1: n - barW, y1: 0, x2: n + barW, y2: 0 }).setFillStyle(off))
 
     const ts = Float64Array.from({ length: SAMPLES }, (_, i) => (2 * i) / (SAMPLES - 1))
     const acc = new Float64Array(SAMPLES)
@@ -74,7 +81,7 @@ export default {
       acc.fill(0)
       k = 0
       target.setSamples({ xValues: ts, yValues: Float32Array.from(ts, (t) => wave.target(t)) })
-      figs.forEach((f, i) => f.setDimensions({ x1: i + 1 - 0.34, y1: 0, x2: i + 1 + 0.34, y2: Math.abs(wave.coef(i + 1)) }).setFillStyle(off))
+      figs.forEach((f, i) => f.setDimensions({ x1: i + 1 - barW, y1: 0, x2: i + 1 + barW, y2: Math.abs(wave.coef(i + 1)) }).setFillStyle(off))
       button.setText(`Waveform: ${wave.name} ▸`)
     }
 
@@ -110,7 +117,7 @@ export default {
       if (k < harmonics.length) {
         addHarmonic()
         // Slow start so the first few terms can be followed, then speed up.
-        schedule(k < 6 ? STEP_MS * 2.5 : STEP_MS)
+        schedule(k < 6 ? p.stepMs * 2.5 : p.stepMs)
       } else {
         // Hold the converged sum, then continue with the next waveform.
         timer = window.setTimeout(() => {

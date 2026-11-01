@@ -1,6 +1,7 @@
 import { Themes, Theme, debug } from '../src'
 import type { Example } from './types'
 import { highlight } from './highlight'
+import { ParamPanel } from './params'
 
 declare const __SFERIC_SITE__: string
 
@@ -139,18 +140,39 @@ function route() {
   catEl.textContent = e.category
   descEl.innerHTML = `${e.description}${e.tags?.length ? `<div class="tags" style="margin-top:6px">${e.tags.map((t) => `<span>${t}</span>`).join('')}</div>` : ''}`
   descEl.hidden = false
+  if (e.params?.length) descEl.prepend(panelFor(e).render())
   codeEl.innerHTML = highlight(e.source)
   btnSource.hidden = false
+  start(e)
+}
+
+/** Build the example into a fresh container (also used to re-run it when a `restart` param changes). */
+function start(e: Entry) {
   const div = document.createElement('div')
   div.style.cssText = 'position:absolute;inset:0;'
   host.appendChild(div)
   try {
-    const c = e.run({ container: div, theme: theme() })
+    const c = e.run({ container: div, theme: theme(), ...(e.params?.length ? panelFor(e).context() : {}) })
     cleanup = typeof c === 'function' ? c : null
   } catch (err) {
     console.error(err)
     div.innerHTML = `<pre style="color:#f66;padding:20px;white-space:pre-wrap">${String((err as Error)?.stack ?? err)}</pre>`
   }
+}
+
+// Slider values persist per example for the session.
+const panels = new Map<string, ParamPanel>()
+function panelFor(e: Entry) {
+  let p = panels.get(e.id)
+  if (!p) {
+    p = new ParamPanel(e.params ?? [], () => {
+      if (currentId() !== e.id) return
+      teardown()
+      start(e)
+    })
+    panels.set(e.id, p)
+  }
+  return p
 }
 
 // ------------------------------------------------------------------ home + thumbnails

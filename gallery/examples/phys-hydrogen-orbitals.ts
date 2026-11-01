@@ -1,17 +1,21 @@
 import { sferic, PointStyle3D, SolidFill } from '../../src'
 import { rng } from '../../src/xydata'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
 
-const SAMPLES = 60_000
-const ORBITALS = [
-  { label: '3d z²', n: 3, l: 2, m: 0 },
-  { label: '2p z', n: 2, l: 1, m: 0 },
-  { label: '3d xy', n: 3, l: 2, m: -2 },
-  { label: '3p x', n: 3, l: 1, m: 1 },
-  { label: '4f z³', n: 4, l: 3, m: 0 },
-  { label: '4f xyz', n: 4, l: 3, m: -2 },
-  { label: '4d z²', n: 4, l: 2, m: 0 },
+const PARAMS: ExampleParam[] = [
+  { key: 'n', label: 'n (shell)', min: 1, max: 5, step: 1, value: 3 },
+  { key: 'l', label: 'l (shape)', min: 0, max: 4, step: 1, value: 2 },
+  { key: 'm', label: 'm (orientation)', min: -4, max: 4, step: 1, value: 0 },
+  { key: 'samples', label: 'Samples', min: 10_000, max: 200_000, step: 10_000, value: 60_000, format: (v) => `${v / 1000}k` },
 ]
+
+// Conventional names of the real orbitals (m > 0: cosine, x-like; m < 0: sine, y-like).
+const SUFFIX: Record<number, Record<number, string>> = {
+  1: { 0: 'z', 1: 'x', [-1]: 'y' },
+  2: { 0: 'z²', 1: 'xz', [-1]: 'yz', 2: 'x²−y²', [-2]: 'xy' },
+  3: { 0: 'z³', 1: 'xz²', [-1]: 'yz²', 2: 'z(x²−y²)', [-2]: 'xyz', 3: 'x(x²−3y²)', [-3]: 'y(3x²−y²)' },
+}
+const orbitalName = (n: number, l: number, m: number) => `${n}${'spdfg'[l]}${SUFFIX[l]?.[m] ? ` ${SUFFIX[l][m]}` : ''}`
 
 /** Generalized Laguerre polynomial L_k^α(x). */
 function laguerre(k: number, alpha: number, x: number) {
@@ -100,9 +104,12 @@ export default {
   category: 'Physics & Math',
   order: 6,
   tags: ['physics', 'quantum', '3d', 'scatter', 'monte carlo'],
+  params: PARAMS,
   description:
-    'Electron probability clouds of the hydrogen atom: 60 000 positions sampled from |ψₙₗₘ|², built from associated Laguerre polynomials (radial part) and real spherical harmonics (angular part). The two colors are the two signs of the wavefunction, so nodal planes and cones show as color boundaries and radial nodes as empty shells. The cloud turns slowly until you grab it; the button steps through 2p, 3p, 3d, 4d and 4f orbitals.',
-  run({ container, theme }) {
+    'Electron probability clouds of the hydrogen atom: 60 000 positions sampled from |ψₙₗₘ|², built from associated Laguerre polynomials (radial part) and real spherical harmonics (angular part). The two colors are the two signs of the wavefunction, so nodal planes and cones show as color boundaries and the n − l − 1 radial nodes as empty shells. Choose any orbital with the n, l and m sliders (l < n, |m| ≤ l; m > 0 and m < 0 are the cosine and sine real orbitals). The cloud turns slowly until you grab it: drag to rotate, wheel to zoom.',
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
     const chart = sferic().Chart3D({ container, theme })
     chart.setBoundingBox({ x: 1, y: 1, z: 1 })
     const pal = theme.examples.positiveNegativeColorPalette
@@ -112,11 +119,13 @@ export default {
     const neg = chart.addPointSeries().setName('ψ < 0').setPointStyle(style(pal[0]))
     const rand = rng(1)
 
-    let index = 0
-    const show = (i: number) => {
-      index = i
-      const o = ORBITALS[i]
-      const s = sampleOrbital(o.n, o.l, o.m, SAMPLES, rand)
+    const show = () => {
+      // Clamp to valid quantum numbers: 0 ≤ l < n, |m| ≤ l.
+      const n = p.n
+      const l = Math.min(p.l, n - 1)
+      const m = Math.max(-l, Math.min(l, p.m))
+      const label = orbitalName(n, l, m)
+      const s = sampleOrbital(n, l, m, p.samples, rand)
       pos.clear().appendSamples({ xValues: s.pos.x, yValues: s.pos.y, zValues: s.pos.z })
       neg.clear().appendSamples({ xValues: s.neg.x, yValues: s.neg.y, zValues: s.neg.z })
       const radii = s.radii.sort((a, b) => a - b)
@@ -124,12 +133,16 @@ export default {
       for (const [axis, name] of [[chart.getDefaultAxisX(), 'x'], [chart.getDefaultAxisY(), 'z'], [chart.getDefaultAxisZ(), 'y']] as const) {
         axis.setTitle(name).setUnits('a₀').setInterval({ start: -R, end: R, stopAxisAfter: true })
       }
-      chart.setTitle(`${o.label} orbital (n = ${o.n}, l = ${o.l}, m = ${o.m})`)
-      button.setText(`Orbital: ${o.label} ▸`)
+      const clamped = l !== p.l || m !== p.m ? ' (clamped)' : ''
+      chart.setTitle(`${label} orbital: n = ${n}, l = ${l}, m = ${m}${clamped}`)
     }
-    const button = chart.addUIElement('button').setText('Orbital').setPosition({ x: 1, y: 99 }).setOrigin({ x: -1, y: 1 })
-    button.addEventListener('click', () => show((index + 1) % ORBITALS.length))
-    show(0)
+    let pending = 0
+    ctx.onParamChange?.(() => {
+      // Sampling 200k points takes a moment; coalesce slider drags.
+      clearTimeout(pending)
+      pending = window.setTimeout(show, 120)
+    })
+    show()
 
     // Slow turntable rotation until the user takes the camera.
     const eye = chart.getCameraLocation()
@@ -151,6 +164,7 @@ export default {
 
     return () => {
       cancelAnimationFrame(raf)
+      clearTimeout(pending)
       container.removeEventListener('pointerdown', stop)
       container.removeEventListener('wheel', stop)
       chart.dispose()

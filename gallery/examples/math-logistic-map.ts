@@ -1,20 +1,25 @@
 import { sferic, SolidFill, DashedLine, StipplePatterns, LUT, PalettedFill, synchronizeAxisIntervals } from '../../src'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
 
 const COLUMNS = 1600
-const TRANSIENT = 600
-const KEEP = 240
 const MAX_TRIES = 6000
 const LYAP_ITER = 400
+const PARAMS: ExampleParam[] = [
+  { key: 'keep', label: 'Points per column', min: 20, max: 800, step: 20, value: 240 },
+  { key: 'transient', label: 'Discarded iterations', min: 0, max: 3000, step: 50, value: 600 },
+]
 
 export default {
   title: 'Logistic Map: Route to Chaos',
   category: 'Physics & Math',
   order: 2,
   tags: ['math', 'chaos', 'bifurcation', 'scatter', 'recompute on zoom'],
+  params: PARAMS,
   description:
-    'Bifurcation diagram of xₙ₊₁ = r·xₙ(1 − xₙ): the long-run values of x for each growth rate r. Period doubling leads to chaos near r ≈ 3.57, interrupted by periodic windows. Zoom anywhere (wheel or drag a rectangle) and the diagram is recomputed for the visible range, up to 380 000 points per view, so self-similar copies of the whole picture appear at every scale. The lower chart is the Lyapunov exponent λ(r): negative where the orbit is stable, positive in chaos.',
-  run({ container, theme }) {
+    'Bifurcation diagram of xₙ₊₁ = r·xₙ(1 − xₙ): the long-run values of x for each growth rate r. Period doubling leads to chaos near r ≈ 3.57, interrupted by periodic windows. Zoom anywhere (wheel or drag a rectangle) and the diagram is recomputed for the visible range, so self-similar copies of the whole picture appear at every scale. Set the discarded iterations near zero to see transients that have not yet settled, slowest at the bifurcation points. The lower chart is the Lyapunov exponent λ(r): negative where the orbit is stable, positive in chaos.',
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
     const dash = sferic().Dashboard({ container, theme, numberOfColumns: 1, numberOfRows: 2 })
     dash.setRowHeight(0, 2.6).setRowHeight(1, 1)
 
@@ -47,13 +52,18 @@ export default {
       .setStrokeStyle(new DashedLine({ thickness: 1, fillStyle: new SolidFill({ color: theme.axisLineColor }), pattern: StipplePatterns.Dashed }))
     synchronizeAxisIntervals(chart.axisX, lyapChart.axisX)
 
-    const xs = new Float64Array(COLUMNS * KEEP)
-    const ys = new Float64Array(COLUMNS * KEEP)
+    let xs = new Float64Array(0)
+    let ys = new Float64Array(0)
     const rs = new Float64Array(COLUMNS)
     const lam = new Float32Array(COLUMNS)
 
     const compute = () => {
       const t0 = performance.now()
+      const KEEP = p.keep, TRANSIENT = p.transient
+      if (xs.length < COLUMNS * KEEP) {
+        xs = new Float64Array(COLUMNS * KEEP)
+        ys = new Float64Array(COLUMNS * KEEP)
+      }
       const { start: a, end: b } = chart.axisX.getInterval()
       const { start: c, end: d } = chart.axisY.getInterval()
       const r0 = Math.max(0, Math.min(a, b)), r1 = Math.min(4, Math.max(a, b))
@@ -96,6 +106,7 @@ export default {
     }
     chart.axisX.addEventListener('intervalchange', schedule)
     chart.axisY.addEventListener('intervalchange', schedule)
+    ctx.onParamChange?.(schedule)
     compute()
 
     return () => {

@@ -30,6 +30,14 @@ TypeScript-only syntax; its `run` wrapper exists so tsc checks it. `sferic-chart
 resolves to `src/index.ts` (Vite alias + tsconfig `paths`). `.github/workflows/pages.yml`
 deploys `dist-site/` to GitHub Pages on pushes to main.
 
+Example params: an example may declare `params` (`gallery/types.ts`); `ParamPanel`
+(`gallery/params.ts`) renders them as sliders in both the gallery and the website. Read
+values live through `paramsOf(PARAMS, ctx)` and react via `ctx.onParamChange`; mark a
+param `restart: true` only when it is fixed at build time (array sizes, grid resolution).
+Examples must still work without a host (defaults), e.g. for gallery thumbnails.
+On the website a chart only gets the mouse wheel and touch gestures once engaged
+(`engageable()` in `site/main.ts`); keep it that way, or readers cannot scroll the page.
+
 Headless verification (puppeteer-core driving the installed Chrome with the
 real GPU; the dev server must be running):
 

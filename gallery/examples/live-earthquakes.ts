@@ -1,5 +1,7 @@
 import { sferic, AxisTickStrategies, LUT, PalettedFill, SolidFill, decodeArcs, ColorRGBA, type Topology, type ChartXY } from '../../src'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
+
+const PARAMS: ExampleParam[] = [{ key: 'minMag', label: 'Minimum magnitude', min: -1, max: 6.5, step: 0.5, value: -1, format: (v) => (v <= -1 ? 'all' : `M ${v.toFixed(1)}`) }]
 
 const FEED = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/'
 const LAND = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-110m.json'
@@ -56,9 +58,12 @@ export default {
   category: 'Live data',
   order: 1,
   tags: ['live data', 'geo', 'scatter', 'per-point size', 'lut', 'polling'],
+  params: PARAMS,
   description:
     'Every earthquake of the past seven days from the USGS real-time GeoJSON feeds, refreshed every minute. Marker size follows magnitude and color follows depth through a LUT; coastlines are decoded from TopoJSON with the library\'s decodeArcs and drawn as a single line series with gaps. Events from the past hour pulse. The lower chart is the same catalog on a date-time axis. Hover any marker for its location, magnitude and depth.',
-  run({ container, theme }) {
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
     const dash = sferic().Dashboard({ container, theme, numberOfColumns: 1, numberOfRows: 2 })
     dash.setRowHeight(0, 2.5).setRowHeight(1, 1)
 
@@ -103,7 +108,7 @@ export default {
     let recent: Quake[] = []
     const size = (m: number) => 2.5 + 1.25 * Math.pow(Math.max(0, m), 1.7)
     const render = () => {
-      sorted = [...cache.quakes.values()].sort((a, b) => a.mag - b.mag)
+      sorted = [...cache.quakes.values()].filter((q) => q.mag >= p.minMag).sort((a, b) => a.mag - b.mag)
       const n = sorted.length
       const sizes = Float32Array.from(sorted, (q) => size(q.mag))
       const depth = Float32Array.from(sorted, (q) => q.depth)
@@ -114,7 +119,8 @@ export default {
       recent = sorted.filter((q) => now - q.time < 3600_000)
       const big = sorted[n - 1]
       const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      map.setTitle(`${n.toLocaleString('en-US')} earthquakes in the past 7 days${big ? `, largest M ${big.mag.toFixed(1)} ${big.place}` : ''} (USGS, updated ${at})`)
+      const atLeast = p.minMag > -1 ? ` of M ${p.minMag.toFixed(1)}+` : ''
+      map.setTitle(`${n.toLocaleString('en-US')} earthquakes${atLeast} in the past 7 days${big ? `, largest M ${big.mag.toFixed(1)} ${big.place}` : ''} (USGS, updated ${at})`)
     }
 
     // Hover: the nearest catalog entry to the snapped point.
@@ -146,6 +152,7 @@ export default {
       if (!disposed) render()
     }
     loadWeek().catch(fail)
+    ctx.onParamChange?.(() => cache.weekLoadedAt && render())
     const poll = setInterval(() => {
       const work = cache.weekLoadedAt ? getJSON<Feed>(`${FEED}all_hour.geojson`).then(merge) : loadWeek()
       work.then(() => !disposed && render()).catch(fail)

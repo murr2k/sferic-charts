@@ -63,6 +63,74 @@ for (const id of ids.filter(wanted)) {
   record(id, ok ? [] : ['no chart canvas (or the demo threw)'])
 }
 
+// Sliders: drive every slider of the hero and each card to its maximum, then back to defaults.
+const canvasHash = (sel) => page.$eval(sel, (el) => {
+  const c = el.querySelector('canvas')
+  if (!c) return ''
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+  let h = 2166136261
+  for (let i = 0; i < d.length; i += 97) h = Math.imul(h ^ d[i], 16777619)
+  return (h >>> 0).toString(16)
+})
+const withParams = ['.hero-figure', ...ids.filter(wanted).map((id) => `#demo-${id}`)]
+for (const sel of withParams) {
+  if (!(await page.$(`${sel} .params input[type=range]`))) continue
+  await page.$eval(sel, (el) => el.scrollIntoView({ block: 'center' }))
+  await page.waitForFunction((s) => !!document.querySelector(`${s} .stage canvas`), { timeout: 15_000 }, sel).catch(() => {})
+  await sleep(800)
+  await page.$$eval(`${sel} .params input[type=range]`, (xs) =>
+    xs.forEach((x) => {
+      x.value = x.max
+      x.dispatchEvent(new Event('input', { bubbles: true }))
+    }),
+  )
+  await sleep(2500)
+  await (await page.$(sel)).screenshot({ path: join(outDir, `params-max-${sel.replace(/[#.]/g, '')}.png`) })
+  const okMax = await page.$eval(sel, (el) => !!el.querySelector('.stage canvas') && !el.querySelector('.stage-error'))
+  await page.click(`${sel} .param-reset`)
+  await sleep(1200)
+  const okReset = await page.$eval(sel, (el) => !!el.querySelector('.stage canvas') && !el.querySelector('.stage-error'))
+  record(`sliders ${sel}`, okMax && okReset ? [] : ['chart missing or errored after moving sliders'])
+}
+
+// Scrolling past charts: a plain wheel over an idle chart scrolls the page and leaves the
+// chart alone; Ctrl + wheel zooms the chart and does not scroll; touch pans only when idle.
+if (wanted('math-logistic-map')) {
+  const stage = '#demo-math-logistic-map .stage'
+  const center = async () => {
+    await page.$eval(stage, (el) => el.scrollIntoView({ block: 'center' }))
+    await sleep(1500)
+    const b = await (await page.$(stage)).boundingBox()
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height * 0.35)
+    await sleep(200)
+  }
+  await center()
+  let y0 = await page.evaluate(() => scrollY)
+  let h0 = await canvasHash(stage)
+  await page.mouse.wheel({ deltaY: 240 })
+  await sleep(600)
+  const scrolled = (await page.evaluate(() => scrollY)) > y0
+  const hint = await page.$eval(`${stage} .wheel-hint`, (el) => el.classList.contains('show'))
+  await center()
+  y0 = await page.evaluate(() => scrollY)
+  h0 = await canvasHash(stage)
+  await page.keyboard.down('Control')
+  await page.mouse.wheel({ deltaY: -240 })
+  await page.keyboard.up('Control')
+  await sleep(900)
+  const zoomed = (await canvasHash(stage)) !== h0
+  const stayed = (await page.evaluate(() => scrollY)) === y0
+  const idleTouch = await page.$eval(`${stage} .host > div`, (d) => getComputedStyle(d).touchAction)
+  await page.click(stage)
+  const engagedTouch = await page.$eval(`${stage} .host > div`, (d) => getComputedStyle(d).touchAction)
+  const problems = []
+  if (!scrolled) problems.push('plain wheel over an idle chart did not scroll the page')
+  if (!hint) problems.push('no zoom hint after a plain wheel')
+  if (!zoomed || !stayed) problems.push(`Ctrl + wheel: chart zoomed ${zoomed}, page stayed ${stayed}`)
+  if (idleTouch !== 'pan-y' || engagedTouch !== 'none') problems.push(`touch-action idle ${idleTouch}, engaged ${engagedTouch}`)
+  record('wheel and touch scrolling', problems)
+}
+
 // Usage examples
 if (wanted('usage')) {
   await page.$eval('#usage', (el) => el.scrollIntoView({ block: 'start' }))

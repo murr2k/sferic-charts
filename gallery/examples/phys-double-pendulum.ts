@@ -1,11 +1,14 @@
 import { sferic, ColorRGBA, PointShape } from '../../src'
-import type { Example } from '../types'
+import { paramsOf, type Example, type ExampleParam } from '../types'
 
-const N = 300
 const G = 9.81
-const DELTA = 1e-7 // rad between neighbouring initial conditions
-const THETA0 = 2.4 // rad, high-energy (chaotic) start
 const DT = 1 / 600
+const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹'
+const PARAMS: ExampleParam[] = [
+  { key: 'theta0', label: 'Starting angle', min: 10, max: 175, step: 1, value: 137, format: (v) => `${v}°` },
+  { key: 'delta', label: 'Initial spread', min: -12, max: -2, step: 1, value: -7, format: (v) => `10⁻${String(-v).replace(/\d/g, (d) => SUP[+d])} rad` },
+  { key: 'count', label: 'Pendulums', min: 10, max: 1000, step: 10, value: 300, restart: true },
+]
 const SUBSTEPS = 10 // per frame: 1/60 s of simulated time
 const RUN_S = 24
 
@@ -25,9 +28,13 @@ export default {
   category: 'Physics & Math',
   order: 5,
   tags: ['physics', 'chaos', 'simulation', 'log axis', 'per-vertex color'],
+  params: PARAMS,
   description:
-    'Three hundred double pendulums whose starting angles differ by 10⁻⁷ rad, integrated with fourth-order Runge-Kutta. For a few seconds they move as one; then the tiny differences grow exponentially and the ensemble fans out. The right chart plots the spread of the lower arm angle on a logarithmic axis: the straight segment is exponential growth, its slope the largest Lyapunov exponent. All 300 pendulums are one line series with per-vertex colors and NaN gaps, re-uploaded every frame.',
-  run({ container, theme }) {
+    'Three hundred double pendulums whose starting angles differ by 10⁻⁷ rad, integrated with fourth-order Runge-Kutta. For a few seconds they move as one; then the tiny differences grow exponentially and the ensemble fans out. The right chart plots the spread of the lower arm angle on a logarithmic axis: the straight segment is exponential growth, its slope the largest Lyapunov exponent. Lower the starting angle below about 60° and the motion turns regular: the spread grows only slowly and the pendulums stay together. All pendulums are one line series with per-vertex colors and NaN gaps, re-uploaded every frame.',
+  run(ctx) {
+    const { container, theme } = ctx
+    const p = paramsOf(PARAMS, ctx)
+    const N = p.count
     const dash = sferic().Dashboard({ container, theme, numberOfColumns: 2, numberOfRows: 1 })
     dash.setColumnWidth(0, 1.15).setColumnWidth(1, 1)
 
@@ -66,9 +73,11 @@ export default {
     let time = 0
 
     const reset = () => {
+      const theta0 = (p.theta0 * Math.PI) / 180
+      const delta = 10 ** p.delta
       for (let i = 0; i < N; i++) {
-        s[4 * i] = THETA0 + (i - N / 2) * DELTA
-        s[4 * i + 1] = THETA0
+        s[4 * i] = theta0 + (i - N / 2) * delta
+        s[4 * i + 1] = theta0
         s[4 * i + 2] = 0
         s[4 * i + 3] = 0
       }
@@ -113,6 +122,7 @@ export default {
     }
 
     div.addUIElement('button').setText('Restart').setPosition({ x: 99, y: 99 }).setOrigin({ x: 1, y: 1 }).addEventListener('click', reset)
+    ctx.onParamChange?.(reset)
     reset()
 
     let raf = 0

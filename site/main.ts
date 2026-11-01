@@ -1,6 +1,7 @@
 import { Themes, debug, type Theme } from 'sferic-charts'
 import type { Example } from '../gallery/types'
 import { highlight } from '../gallery/highlight'
+import { ParamPanel } from '../gallery/params'
 import type { Snippet } from './usage/snippet'
 import { checkSyntax, extractSnippet, runSnippet } from './runner'
 
@@ -194,8 +195,58 @@ function register(live: Live) {
   lives.push(live)
   byStage.set(live.stage, live)
   observer.observe(live.stage)
+  engageable(live.stage)
   return live
 }
+
+// ------------------------------------------------------------------ scrolling past charts
+
+/**
+ * Charts take the mouse wheel (zoom) and every touch gesture, which would trap a reader
+ * scrolling down a page made of charts. Until a chart is engaged, wheel events stop at
+ * its stage (the page scrolls; Ctrl or Cmd + wheel still zooms) and touch allows vertical
+ * page panning. A mouse press or a tap engages a chart; leaving it with the mouse or
+ * pressing anywhere else releases it.
+ */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent)
+function engageable(stage: HTMLElement) {
+  const hint = el('div', 'wheel-hint')
+  stage.append(hint)
+  let hintTimer = 0
+  const flash = (text: string) => {
+    hint.textContent = text
+    hint.classList.add('show')
+    clearTimeout(hintTimer)
+    hintTimer = window.setTimeout(() => hint.classList.remove('show'), 1600)
+  }
+  const engage = (touch: boolean) => {
+    if (stage.classList.contains('engaged')) return
+    stage.classList.add('engaged')
+    if (touch) flash('Chart active: drag to pan or rotate, pinch to zoom')
+  }
+  stage.addEventListener(
+    'wheel',
+    (e) => {
+      if (e.ctrlKey || e.metaKey || stage.classList.contains('engaged')) return
+      e.stopPropagation() // never reaches the chart, so the page scrolls
+      flash(`${IS_MAC ? '⌘' : 'Ctrl'} + scroll to zoom, or click the chart`)
+    },
+    { capture: true, passive: true },
+  )
+  stage.addEventListener('pointerdown', (e) => e.pointerType === 'mouse' && engage(false), { capture: true })
+  // Touch engages on a tap only, so a swipe that scrolls the page does not arm the chart.
+  stage.addEventListener('click', () => engage(true), { capture: true })
+  stage.addEventListener('pointerleave', (e) => {
+    if (e.pointerType === 'mouse') stage.classList.remove('engaged')
+  })
+}
+document.addEventListener(
+  'pointerdown',
+  (e) => {
+    for (const s of document.querySelectorAll('.stage.engaged')) if (!s.contains(e.target as Node)) s.classList.remove('engaged')
+  },
+  { capture: true },
+)
 const liveCountEl = $('#st-live')
 function updateLiveCount() {
   const n = lives.filter((l) => l.running).length
@@ -228,7 +279,10 @@ function exampleCard(spec: Card) {
     <div class="tags">${(ex.tags ?? []).map((t) => `<span>${esc(t)}</span>`).join('')}</div>`
   const stage = $('.stage', card)
   const manual = !!spec.manual || reducedMotion
-  const live = register(new Live(stage, (container) => ex.run({ container, theme: theme() }), manual))
+  // Sliders keep their values across re-runs (theme changes, scrolling away and back).
+  const panel = ex.params?.length ? new ParamPanel(ex.params, () => live.restart()) : null
+  const live = register(new Live(stage, (container) => ex.run({ container, theme: theme(), ...panel?.context() }), manual))
+  if (panel) stage.after(panel.render())
   if (manual) manualOverlay(live, spec.manual ?? 'Run demo')
   $('[data-act=source]', card).addEventListener('click', () => showSource(spec.id, ex.title))
   return card
@@ -243,7 +297,9 @@ for (const [section, cards] of Object.entries(SECTIONS)) {
 {
   const stage = $('#hero-stage')
   const ex = examples.get(HERO)!
-  const live = register(new Live(stage, (container) => ex.run({ container, theme: theme() }), reducedMotion))
+  const panel = ex.params?.length ? new ParamPanel(ex.params, () => live.restart()) : null
+  const live = register(new Live(stage, (container) => ex.run({ container, theme: theme(), ...panel?.context() }), reducedMotion))
+  if (panel) stage.after(panel.render())
   if (reducedMotion) manualOverlay(live, 'Start the receiver')
   $('#hero-source').addEventListener('click', () => showSource(HERO, ex.title))
 }
