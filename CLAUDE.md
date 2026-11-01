@@ -28,7 +28,10 @@ and run as plain JavaScript by `site/runner.ts` (library exports, `container` an
 `theme` in scope; charts and timers are tracked and disposed), so it must contain no
 TypeScript-only syntax; its `run` wrapper exists so tsc checks it. `sferic-charts`
 resolves to `src/index.ts` (Vite alias + tsconfig `paths`). `.github/workflows/pages.yml`
-deploys `dist-site/` to GitHub Pages on pushes to main.
+deploys `dist-site/` to GitHub Pages on pushes to main, served at
+https://sferic.murraykopit.com/ via a DNS-only Cloudflare CNAME to `murr2k.github.io`.
+Keep that record unproxied: GitHub issues and renews the certificate itself. (The bare
+`murraykopit.com` is a separate Netlify blog, not this site.)
 
 Example params: an example may declare `params` (`gallery/types.ts`); `ParamPanel`
 (`gallery/params.ts`) renders them as sliders in both the gallery and the website. Read

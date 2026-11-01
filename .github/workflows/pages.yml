@@ -1,6 +1,8 @@
-# Build the website (site/, with the gallery at /gallery/) and deploy it to GitHub Pages.
-# One-time setup: repository Settings > Pages > Build and deployment > Source: GitHub Actions,
-# or: gh api -X POST repos/murr2k/sferic-charts/pages -f build_type=workflow
+# Build the website (site/, with the gallery at /gallery/) and deploy it to GitHub Pages,
+# served at https://sferic.murraykopit.com/. Pages source: GitHub Actions; the custom domain
+# is set in the repository's Pages settings and the Cloudflare zone murraykopit.com has a
+# DNS-only CNAME sferic -> murr2k.github.io (keep it unproxied so GitHub can renew the
+# certificate). The build uses relative paths, so it also works under any subpath.
 name: Pages
 
 on:

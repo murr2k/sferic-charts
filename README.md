@@ -4,6 +4,8 @@ GPU-accelerated charting for the browser. Sferic renders millions of data points
 at interactive frame rates with WebGL2, ships with a dark, glowing default theme,
 and uses a fluent builder API. Zero runtime dependencies.
 
+**Live demos, interactive examples and the full gallery: [sferic.murraykopit.com](https://sferic.murraykopit.com/)**
+
 ![Sferic gallery: real-time dashboards, 3D surfaces, heatmaps, trading, polar, treemap, gauges, parallel coordinates, map](https://raw.githubusercontent.com/murr2k/sferic-charts/main/docs/gallery.jpg)
 
 > A *sferic* is the broadband radio impulse emitted by a lightning stroke.
