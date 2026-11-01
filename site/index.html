@@ -163,8 +163,10 @@
                     <button class="btn primary small" id="editor-run">Run</button>
                   </div>
                   <div class="editor">
-                    <pre id="editor-hl" aria-hidden="true"><code></code></pre>
-                    <textarea id="editor-input" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Example code"></textarea>
+                    <div class="editor-inner">
+                      <pre id="editor-hl" aria-hidden="true"><code></code></pre>
+                      <textarea id="editor-input" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="Example code"></textarea>
+                    </div>
                   </div>
                   <pre class="editor-error" id="editor-error" role="status" hidden></pre>
                 </div>
