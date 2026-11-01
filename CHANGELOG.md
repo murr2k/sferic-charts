@@ -6,6 +6,30 @@ All notable changes to Sferic Charts are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Per-point and per-vertex colors (`colors` in `appendSamples` / `setSamples`) are drawn
+  as given. They were multiplied by the series' own color, so a 1M-point rainbow scatter
+  came out tinted by the first palette slot and a pink point on an amber series turned
+  orange.
+
+### Added
+
+- Project website (`site/`, `npm run build:site`, deployed to GitHub Pages by
+  `.github/workflows/pages.yml`): a live VLF-receiver hero, live data from public feeds,
+  physics and mathematics demos, streaming and scale demos, and editable usage examples
+  that run in the page. Charts on the page do not capture page scrolling: a plain mouse
+  wheel scrolls past them (Ctrl or Cmd + wheel, or a click first, zooms) and on touch
+  screens a tap hands a chart the gestures. `npm run test:site` checks it headlessly.
+- Example params: a gallery example can declare numeric `params`, which the gallery and
+  the website render as sliders and pass to the example live (or re-run it). The wave
+  tank, pendulums, hydrogen orbitals, Fourier series, Mandelbrot, logistic map, Lorenz
+  attractor, earthquakes and VLF receiver use them.
+- Gallery examples: VLF receiver (sferics, tweeks, whistlers); live USGS earthquakes,
+  Open-Meteo weather, microphone spectrogram and page telemetry; wave interference,
+  double-pendulum chaos, hydrogen orbitals, Fourier series, Mandelbrot deep zoom and the
+  logistic map.
+
 ## [0.2.1] - 2026-10-17
 
 No library changes: the first release published from GitHub Actions, with npm

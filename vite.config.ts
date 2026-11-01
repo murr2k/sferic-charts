@@ -2,6 +2,7 @@ import { defineConfig, Plugin } from 'vite'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { cpus } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Dev-only: POST /__snap?name=foo with a PNG body writes it to SFERIC_SNAP_DIR
@@ -54,10 +55,17 @@ function cpuTimes(): Plugin {
   }
 }
 
-// Gallery dev server. Port 8779 is allocated in ~/.claude/port-registry.md.
-export default defineConfig({
+/** `import ... from 'sferic-charts'` resolves to the library source (website usage snippets). */
+export const sfericAlias = [{ find: /^sferic-charts$/, replacement: fileURLToPath(new URL('./src/index.ts', import.meta.url)) }]
+
+// Gallery dev server (the website is served from it at /site/). Port 8779 is allocated
+// in ~/.claude/port-registry.md. `--mode pages` builds the gallery as the website's
+// /gallery/ subpage (npm run build:site), which links back to the site at ../.
+export default defineConfig(({ command, mode }) => ({
   plugins: [snapshotSink(), cpuTimes()],
+  resolve: { alias: sfericAlias },
+  define: { __SFERIC_SITE__: JSON.stringify(command === 'serve' ? '/site/' : mode === 'pages' ? '../' : '') },
   server: { port: 8779, strictPort: true, host: '127.0.0.1' },
   preview: { port: 8779, strictPort: true, host: '127.0.0.1' },
   build: { outDir: 'dist-gallery', target: 'es2022' },
-})
+}))

@@ -9,6 +9,7 @@ const { ATTR } = S
 export interface XYMaps { mx: AxisMap; my: AxisMap; x0: number; x1: number }
 
 const lutModeOf = (p: LookUpProperty) => (p === 'x' ? 1 : p === 'y' ? 2 : 3)
+const WHITE = [1, 1, 1, 1] as const
 
 function chunkSetup(r: GLRenderer, prog: ReturnType<GLRenderer['program']>, maps: XYMaps, ch: Chunk) {
   r.useXform(prog, makeXform(maps.mx, maps.my, ch.ox, ch.oy, r.dpr))
@@ -116,7 +117,8 @@ export function drawLineStrip(r: GLRenderer, store: XYStore, maps: XYMaps, st: L
     if (n < 2) return
     store.sync(r, ch)
     chunkSetup(r, prog, maps, ch)
-    const c = st.color.toFloat()
+    // The shader multiplies u_color by the vertex color; per-vertex colors are absolute, not tinted.
+    const c = usesColor ? WHITE : st.color.toFloat()
     r.u4f(prog.u.u_color, c[0], c[1], c[2], c[3])
     r.useLUT(prog, pal ? lutModeOf(pal.lookUpProperty) : 0, pal ? pal.lut : null)
     if (!prim) {
@@ -302,7 +304,7 @@ export function drawPoints(r: GLRenderer, store: XYStore, maps: XYMaps, st: Poin
     if (e - s < 1) return
     store.sync(r, ch)
     chunkSetup(r, prog, maps, ch)
-    const c = st.color.toFloat()
+    const c = usesColor ? WHITE : st.color.toFloat()
     r.u4f(prog.u.u_color, c[0], c[1], c[2], c[3])
     r.u1f(prog.u.u_size, st.size * r.dpr)
     r.u1f(prog.u.u_sizeScale, r.dpr)

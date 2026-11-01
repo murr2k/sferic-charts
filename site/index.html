@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" data-theme="storm">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sferic Charts</title>
+    <meta name="description" content="Sferic Charts: GPU-accelerated WebGL2 charting for the browser. Real-time streaming, millions of points, 3D, heatmaps, polar, maps and dashboards behind a fluent TypeScript API." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M13 2 4 14h6l-1 8 9-12h-6l1-8z%22 fill=%22%23e3d84f%22/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="#top" aria-label="Sferic Charts home">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="currentColor" /></svg>
+          <span>Sferic</span><small>charts</small>
+        </a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="#live">Live data</a>
+          <a href="#science">Physics &amp; math</a>
+          <a href="#scale">Scale</a>
+          <a href="#usage">Usage</a>
+          <a href="#start">Get started</a>
+        </nav>
+        <div class="nav-tools">
+          <label class="theme-pick"><span>Theme</span><select id="theme" aria-label="Chart theme"></select></label>
+          <a class="btn ghost" data-gallery href="./gallery/">Gallery</a>
+          <a class="icon-link" href="https://github.com/murr2k/sferic-charts" target="_blank" rel="noopener" aria-label="Sferic Charts on GitHub">
+            <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <p id="no-webgl" class="banner" hidden>This browser does not provide WebGL2, so the charts on this page cannot render. Any current desktop or mobile browser will.</p>
+
+      <section class="hero" id="top">
+        <div class="wrap">
+          <div class="hero-grid">
+            <div class="hero-copy">
+              <p class="eyebrow">Open-source WebGL2 charting</p>
+              <h1>Millions of points. Live, in&nbsp;the&nbsp;browser.</h1>
+              <p class="lede">
+                Sferic Charts is a GPU-accelerated charting library for real-time and large data: lines, heatmaps, 3D surfaces,
+                polar plots, maps and dashboards behind a fluent TypeScript API. MIT licensed, zero runtime dependencies.
+              </p>
+              <div class="cta">
+                <button class="install" data-copy="npm install sferic-charts" title="Copy to clipboard"><span class="prompt">$</span> npm install sferic-charts</button>
+                <a class="btn primary" href="#usage">Try the API</a>
+                <a class="btn ghost" data-gallery href="./gallery/">70+ examples</a>
+              </div>
+            </div>
+            <dl class="stats" aria-label="Live statistics for this page">
+              <div class="stat"><dt>Frames per second</dt><dd id="st-fps">-</dd></div>
+              <div class="stat"><dt>CPU ms per rendered frame, median</dt><dd id="st-ms">-</dd></div>
+              <div class="stat"><dt>Demos running now</dt><dd id="st-live">0</dd></div>
+              <div class="stat"><dt>WebGL contexts, shared by all of them</dt><dd>1</dd></div>
+            </dl>
+          </div>
+          <figure class="hero-figure">
+            <div class="stage hero-stage" id="hero-stage" style="--h:560px"></div>
+            <figcaption>
+              <span>
+                <b>A simulated VLF radio receiver.</b> A <i>sferic</i> is the radio impulse from a lightning stroke. This one hears
+                thousands of them, plus tweeks, whistlers and navy transmitters: 48,000 samples a second into the waveform and a
+                1024-point FFT 50 times a second into the scrolling spectrogram.
+              </span>
+              <button class="btn ghost" id="hero-source">Source</button>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" id="live">
+        <div class="wrap">
+          <header class="section-head">
+            <p class="eyebrow">Live data</p>
+            <h2>Real feeds, straight into the GPU</h2>
+            <p>
+              Public data sources polled from your browser, with no server and no API keys, plus two streams that never leave
+              your machine: your microphone and this page's own frame timing. Each demo starts when it scrolls into view and
+              stops when it leaves.
+            </p>
+            <p class="tip">
+              Every chart is interactive: drag to pan (or rotate in 3D), hover for values, double-click to reset. To zoom,
+              hold <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on a Mac) while scrolling, or click a chart first; on a phone, tap a chart
+              to take control of it. Sliders under a chart change its parameters live.
+            </p>
+          </header>
+          <div class="cards" data-cards="live"></div>
+        </div>
+      </section>
+
+      <section class="section" id="science">
+        <div class="wrap">
+          <header class="section-head">
+            <p class="eyebrow">Physics &amp; mathematics</p>
+            <h2>Simulations that redraw every frame</h2>
+            <p>
+              Numerical models stepped in real time and computations redone on every zoom: a wave tank, chaotic pendulums,
+              quantum orbitals, a fractal you can zoom ten billion times, and the logistic map's road to chaos.
+            </p>
+          </header>
+          <div class="cards" data-cards="science"></div>
+        </div>
+      </section>
+
+      <section class="section" id="scale">
+        <div class="wrap">
+          <header class="section-head">
+            <p class="eyebrow">Streaming &amp; scale</p>
+            <h2>Built for data that does not fit in a spreadsheet</h2>
+            <p>
+              A hundred live charts on one canvas, ten million points that still pan smoothly, a million individually colored
+              scatter points and a real-time 3D surface. Heavy demos wait for a click.
+            </p>
+          </header>
+          <div class="bench">
+            <table>
+              <caption>Median cost per rendered frame, CPU and GPU (npm run bench; Intel Arc integrated GPU, 1920 × 1080, headless Chrome)</caption>
+              <thead><tr><th scope="col">Scenario</th><th scope="col">ms per frame</th></tr></thead>
+              <tbody>
+                <tr><td>10 channels × 1 kHz streaming</td><td>3.2</td></tr>
+                <tr><td>1000 × 1000 heatmap, wheel zooming</td><td>3.2</td></tr>
+                <tr><td>Real-time FFT spectrogram</td><td>3.7</td></tr>
+                <tr><td>10M-point line, wheel zooming</td><td>4.3</td></tr>
+                <tr><td>100 live charts in one dashboard</td><td>9.1</td></tr>
+                <tr><td>1M-point scatter, per-point colors, panning</td><td>11.5</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="cards" data-cards="scale"></div>
+        </div>
+      </section>
+
+      <section class="section" id="usage">
+        <div class="wrap">
+          <header class="section-head">
+            <p class="eyebrow">Usage</p>
+            <h2>Edit the code, see the chart</h2>
+            <p>
+              Each example is complete: copy it into a project after <code>npm install sferic-charts</code>, with
+              <code>container</code> set to an element (or its id) and <code>theme</code> to one of <code>Themes</code>. Edits
+              re-run automatically; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs at once.
+            </p>
+          </header>
+          <div class="usage">
+            <div class="usage-tabs" id="usage-tabs" role="tablist" aria-label="Usage examples"></div>
+            <div class="usage-main">
+              <div class="usage-intro">
+                <h3 id="usage-title"></h3>
+                <p id="usage-summary"></p>
+              </div>
+              <div class="usage-split">
+                <div class="editor-wrap">
+                  <div class="editor-bar">
+                    <span class="dot" aria-hidden="true"></span><span class="file">example.ts</span>
+                    <span class="grow"></span>
+                    <button class="btn ghost small" id="editor-reset">Reset</button>
+                    <button class="btn ghost small" id="editor-copy">Copy</button>
+                    <button class="btn primary small" id="editor-run">Run</button>
+                  </div>
+                  <div class="editor">
+                    <pre id="editor-hl" aria-hidden="true"><code></code></pre>
+                    <textarea id="editor-input" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Example code"></textarea>
+                  </div>
+                  <pre class="editor-error" id="editor-error" role="status" hidden></pre>
+                </div>
+                <div class="stage usage-stage" id="usage-stage" style="--h:100%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="start">
+        <div class="wrap">
+          <header class="section-head">
+            <p class="eyebrow">Get started</p>
+            <h2>Three lines to a chart</h2>
+          </header>
+          <div class="start-grid">
+            <div class="start-code">
+              <button class="install" data-copy="npm install sferic-charts" title="Copy to clipboard"><span class="prompt">$</span> npm install sferic-charts</button>
+              <pre class="code-block"><code id="static-code">import { sferic, Themes } from 'sferic-charts'
+
+const chart = sferic().ChartXY({ container: 'chart', theme: Themes.storm })
+chart.addLineSeries().appendJSON([{ x: 0, y: 1 }, { x: 1, y: 3 }, { x: 2, y: 2 }])</code></pre>
+              <p class="note">ES module, UMD/CommonJS build and TypeScript declarations included. Requires WebGL2, which every current desktop and mobile browser provides.</p>
+            </div>
+            <ul class="features">
+              <li><b>One WebGL context</b><span>Every chart on a page shares it and draws into its own canvas, so there is no limit of 16 charts.</span></li>
+              <li><b>Precision at any zoom</b><span>Data is stored per chunk relative to a float64 origin; epoch timestamps zoom to microseconds without jitter.</span></li>
+              <li><b>Rendering on demand</b><span>Nothing is drawn unless data, layout, interaction or an animation changed.</span></li>
+              <li><b>Themes and palettes</b><span>Five themes, GPU bloom glow, and series palettes checked for color-vision-deficiency separation.</span></li>
+            </ul>
+          </div>
+          <div class="links">
+            <a class="btn primary" data-gallery href="./gallery/">Browse the gallery</a>
+            <a class="btn ghost" href="https://github.com/murr2k/sferic-charts#readme" target="_blank" rel="noopener">Read the README</a>
+            <a class="btn ghost" href="https://www.npmjs.com/package/sferic-charts" target="_blank" rel="noopener">npm package</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap">
+        <p>Sferic Charts is MIT licensed. Every chart on this page is drawn by the library itself.</p>
+        <p class="credits">
+          Earthquake data: <a href="https://earthquake.usgs.gov/earthquakes/feed/" target="_blank" rel="noopener">U.S. Geological Survey</a>.
+          Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0).
+          Coastlines: Natural Earth via world-atlas.
+          The microphone demo processes audio locally and sends nothing anywhere.
+        </p>
+      </div>
+    </footer>
+
+    <dialog id="src-dialog" aria-labelledby="src-title">
+      <header class="dlg-head">
+        <div><b id="src-title"></b><a id="src-file" target="_blank" rel="noopener"></a></div>
+        <span class="grow"></span>
+        <button class="btn ghost small" id="src-copy">Copy</button>
+        <button class="btn ghost small" id="src-close" aria-label="Close">Close</button>
+      </header>
+      <pre class="dlg-code"><code id="src-code"></code></pre>
+    </dialog>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

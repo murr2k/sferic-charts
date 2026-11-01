@@ -86,8 +86,18 @@ async function assertSeesWarnings(page) {
 
 /** Open the gallery with a theme preset; collects page errors into page.__errors. */
 export async function openGallery(browser, theme = 'storm') {
+  return openPage(browser, '/#/', theme)
+}
+
+/**
+ * Open a dev-server page (path relative to BASE) with a theme preset. Page errors and
+ * WebGL warnings are collected into page.__errors; console errors from `ignoreHosts`
+ * (third-party data a demo fetches, which may be offline) go to page.__external instead.
+ */
+export async function openPage(browser, path, theme = 'storm', { ignoreHosts = [] } = {}) {
   const page = await browser.newPage()
   page.__errors = []
+  page.__external = []
   await page.evaluateOnNewDocument((t) => {
     try {
       localStorage.setItem('sferic.theme', t)
@@ -101,10 +111,12 @@ export async function openGallery(browser, theme = 'storm') {
     const warn = m.type() === 'warn' || m.type() === 'warning'
     const gl = warn && /WebGL|GL_INVALID|GL ERROR/i.test(m.text())
     if (m.type() !== 'error' && !gl) return
-    if (/favicon\.ico$/.test(m.location()?.url ?? '')) return
+    const url = m.location()?.url ?? ''
+    if (/favicon\.ico$/.test(url)) return
+    if (ignoreHosts.some((h) => url.includes(h))) return page.__external.push(`${m.text()} (${url})`)
     page.__errors.push(m.text())
   })
-  await page.goto(`${BASE}/#/`, { waitUntil: 'load' })
+  await page.goto(`${BASE}${path}`, { waitUntil: 'load' })
   await assertSeesWarnings(page)
   return page
 }
@@ -148,6 +160,9 @@ export const SETTLE = {
   'map-': 5000,
   'rt-': 2500,
   '3d-': 2500,
+  'live-': 5000,
+  'math-': 2500,
+  'phys-': 2500,
 }
 export const settleFor = (id, base) => {
   for (const [k, v] of Object.entries(SETTLE)) if (id === k || (k.endsWith('-') && id.startsWith(k))) return Math.max(v, base)

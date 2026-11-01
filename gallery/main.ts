@@ -1,12 +1,16 @@
 import { Themes, Theme, debug } from '../src'
 import type { Example } from './types'
+import { highlight } from './highlight'
+import { ParamPanel } from './params'
+
+declare const __SFERIC_SITE__: string
 
 const modules = import.meta.glob<{ default: Example }>('./examples/*.ts', { eager: true })
 const sources = import.meta.glob<string>('./examples/*.ts', { eager: true, query: '?raw', import: 'default' })
 
 interface Entry extends Example { id: string; source: string }
 
-const CATEGORY_ORDER = ['XY', 'Real-time', 'Heatmaps', 'Dashboards', '3D', 'Polar', 'Bars', 'Pie & Gauges', 'Statistics', 'Hierarchy', 'Other']
+const CATEGORY_ORDER = ['XY', 'Real-time', 'Live data', 'Heatmaps', 'Dashboards', '3D', 'Physics & Math', 'Polar', 'Bars', 'Pie & Gauges', 'Statistics', 'Hierarchy', 'Other']
 
 const entries: Entry[] = Object.entries(modules)
   .map(([path, m]) => ({ ...m.default, id: path.replace(/^.*\/|\.ts$/g, ''), source: sources[path] ?? '' }))
@@ -27,6 +31,11 @@ const btnSource = $<HTMLButtonElement>('btn-source')
 const themeSel = $<HTMLSelectElement>('theme')
 const search = $<HTMLInputElement>('search')
 const fpsEl = $('fps')
+
+// Link to the project website when one is served alongside the gallery (see vite.config.ts).
+const siteLink = $<HTMLAnchorElement>('site-link')
+siteLink.hidden = !__SFERIC_SITE__
+if (__SFERIC_SITE__) siteLink.href = __SFERIC_SITE__
 
 // Listener registry so a hot update can unbind everything before re-running this module.
 const offs: (() => void)[] = []
@@ -98,19 +107,6 @@ on(search, 'input', () => renderNav(search.value))
 
 // ------------------------------------------------------------------ source view
 
-function highlight(src: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)|\b(\d[\d_]*\.?\d*(?:e[+-]?\d+)?)\b|\b(const|let|var|function|return|if|else|for|while|of|in|new|import|from|export|default|async|await|true|false|null|undefined|type|interface|as|satisfies|class|extends)\b|\b([A-Za-z_$][\w$]*)(?=\()/g
-  let out = ''
-  let last = 0
-  for (const m of src.matchAll(re)) {
-    out += esc(src.slice(last, m.index))
-    const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'n' : m[4] ? 'k' : 'f'
-    out += `<span class="tk-${cls}">${esc(m[0])}</span>`
-    last = m.index! + m[0].length
-  }
-  return out + esc(src.slice(last))
-}
 let showSource = store.get('sferic.source') === '1'
 const syncSource = () => {
   sourcePane.hidden = !showSource
@@ -144,18 +140,39 @@ function route() {
   catEl.textContent = e.category
   descEl.innerHTML = `${e.description}${e.tags?.length ? `<div class="tags" style="margin-top:6px">${e.tags.map((t) => `<span>${t}</span>`).join('')}</div>` : ''}`
   descEl.hidden = false
+  if (e.params?.length) descEl.prepend(panelFor(e).render())
   codeEl.innerHTML = highlight(e.source)
   btnSource.hidden = false
+  start(e)
+}
+
+/** Build the example into a fresh container (also used to re-run it when a `restart` param changes). */
+function start(e: Entry) {
   const div = document.createElement('div')
   div.style.cssText = 'position:absolute;inset:0;'
   host.appendChild(div)
   try {
-    const c = e.run({ container: div, theme: theme() })
+    const c = e.run({ container: div, theme: theme(), ...(e.params?.length ? panelFor(e).context() : {}) })
     cleanup = typeof c === 'function' ? c : null
   } catch (err) {
     console.error(err)
     div.innerHTML = `<pre style="color:#f66;padding:20px;white-space:pre-wrap">${String((err as Error)?.stack ?? err)}</pre>`
   }
+}
+
+// Slider values persist per example for the session.
+const panels = new Map<string, ParamPanel>()
+function panelFor(e: Entry) {
+  let p = panels.get(e.id)
+  if (!p) {
+    p = new ParamPanel(e.params ?? [], () => {
+      if (currentId() !== e.id) return
+      teardown()
+      start(e)
+    })
+    panels.set(e.id, p)
+  }
+  return p
 }
 
 // ------------------------------------------------------------------ home + thumbnails
