@@ -4,3 +4,4 @@ dist-gallery/
 *.log
 .env
 .snapshots/
+dist-site/

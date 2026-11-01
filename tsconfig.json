@@ -12,7 +12,8 @@
     "types": ["vite/client"],
     "declaration": true,
     "declarationDir": "dist/types",
-    "noEmit": true
+    "noEmit": true,
+    "paths": { "sferic-charts": ["./src/index.ts"] }
   },
-  "include": ["src", "gallery"]
+  "include": ["src", "gallery", "site"]
 }

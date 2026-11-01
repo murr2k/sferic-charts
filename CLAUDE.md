@@ -14,11 +14,21 @@ the showcase and test bed.
 
 ```powershell
 npm install
-.\run.cmd                 # Vite dev server, gallery at http://127.0.0.1:8779
-npm run typecheck         # tsc --noEmit (must stay clean)
+.\run.cmd                 # Vite dev server, gallery at http://127.0.0.1:8779, website at /site/
+npm run typecheck         # tsc --noEmit (must stay clean; covers src, gallery and site)
 npm run build:lib         # dist/sferic.js (ES) + UMD + dist/types
 npm run build             # static gallery to dist-gallery/
+npm run build:site        # website to dist-site/ (gallery at dist-site/gallery/); preview:site serves it
 ```
+
+Website (`site/`): a curated page over gallery examples (featured by id in
+`site/main.ts`, mounted while on screen, disposed when scrolled away) plus editable
+usage snippets in `site/usage/*.ts`. A snippet's `// #region` body is shown, edited
+and run as plain JavaScript by `site/runner.ts` (library exports, `container` and
+`theme` in scope; charts and timers are tracked and disposed), so it must contain no
+TypeScript-only syntax; its `run` wrapper exists so tsc checks it. `sferic-charts`
+resolves to `src/index.ts` (Vite alias + tsconfig `paths`). `.github/workflows/pages.yml`
+deploys `dist-site/` to GitHub Pages on pushes to main.
 
 Headless verification (puppeteer-core driving the installed Chrome with the
 real GPU; the dev server must be running):
@@ -29,6 +39,8 @@ npm run test:browser                  # context loss, no-WebGL, GPU memory relea
 npm run verify:package                # pack + clean install + ESM/CJS + types (bundler/node16/nodenext)
 npm run snap                          # every example -> .snapshots/<theme>/<id>.png; fails on page or WebGL errors
 npm run snap -- --theme light --filter rt-,xy-log
+npm run test:site                     # website: every demo card + usage example -> .snapshots/site/; fails on errors
+npm run test:site -- --size 390x844 --theme daylight   # phone width; --path / with SFERIC_URL checks a built site
 npm run bench                         # GPU-synced cost per rendered frame (debug.syncGPU + debug.onFrame)
 $env:SFERIC_CHROME_ARGS="--disable-webgl --disable-webgl2"; npm run snap   # extra Chrome flags for any script
 node scripts/glcount.mjs <id>         # WebGL calls per frame

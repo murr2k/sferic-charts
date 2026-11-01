@@ -168,10 +168,12 @@ Chrome): the wall time of each rendered frame, CPU and GPU, synchronized with a
 git clone https://github.com/murr2k/sferic-charts.git
 cd sferic-charts
 npm install
-npm run dev              # gallery at http://127.0.0.1:8779 (run.cmd on Windows)
+npm run dev              # gallery at http://127.0.0.1:8779, website at /site/ (run.cmd on Windows)
 npm run typecheck
 npm run build:lib        # library bundle and type declarations
 npm run build            # static gallery build
+npm run build:site       # static website with the gallery under /gallery/ (dist-site/)
+npm run test:site        # load every website demo and usage example headlessly; fails on errors
 npm test                 # map decoder hostile-input tests
 npm run snap             # screenshot every example headlessly; fails on page or WebGL errors
 npm run test:browser     # context loss, no-WebGL, GPU memory and accessibility checks

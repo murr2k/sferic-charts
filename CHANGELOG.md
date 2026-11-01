@@ -13,6 +13,17 @@ All notable changes to Sferic Charts are documented here. The format follows
   came out tinted by the first palette slot and a pink point on an amber series turned
   orange.
 
+### Added
+
+- Project website (`site/`, `npm run build:site`, deployed to GitHub Pages by
+  `.github/workflows/pages.yml`): a live VLF-receiver hero, live data from public feeds,
+  physics and mathematics demos, streaming and scale demos, and editable usage examples
+  that run in the page. `npm run test:site` checks it headlessly.
+- Gallery examples: VLF receiver (sferics, tweeks, whistlers); live USGS earthquakes,
+  Open-Meteo weather, microphone spectrogram and page telemetry; wave interference,
+  double-pendulum chaos, hydrogen orbitals, Fourier series, Mandelbrot deep zoom and the
+  logistic map.
+
 ## [0.2.1] - 2026-10-17
 
 No library changes: the first release published from GitHub Actions, with npm
