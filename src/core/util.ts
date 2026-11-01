@@ -79,7 +79,9 @@ export function formatNumber(v: number, decimals: number): string {
   if ((a >= 1e15 || (a > 0 && a < 1e-6 && decimals > 8)) && a !== 0) {
     return v.toExponential(Math.min(6, Math.max(1, decimals > 8 ? 3 : 2)))
   }
-  const d = Math.min(Math.max(0, decimals), 12)
+  // Up to 16 decimals: below a 1e-12 step (zooms past ~10¹² on values near 1) fewer
+  // made neighbouring tick labels identical. float64 carries about 16-17 significant digits.
+  const d = Math.min(Math.max(0, decimals), 16)
   const s = v.toFixed(d)
   return s === '-0' || /^-0\.0*$/.test(s) ? s.slice(1) : s
 }

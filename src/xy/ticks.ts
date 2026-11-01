@@ -183,7 +183,7 @@ export class NumericTickStrategy extends TickStrategy {
     if (this.formatter) return this.formatter(v, range)
     const a = Math.abs(v)
     if (a !== 0 && (a < 1e-4 || a >= 1e15)) return v.toExponential(4)
-    return formatNumber(v, Math.min(10, decimalsForStep(this.lastStep) + 2))
+    return formatNumber(v, Math.min(16, decimalsForStep(this.lastStep) + 2))
   }
 }
 
