@@ -8,7 +8,7 @@ export default {
   order: 21,
   tags: ['datagrid', 'heatmap', 'lut', 'scrolling', 'real-time'],
   description:
-    '2,000 hosts by 8 metrics. Cell backgrounds are PalettedFills, so each cell is colored by its own value through a LUT. Only visible rows are drawn: scroll with the wheel or drag the scrollbar. Values refresh every second.',
+    '2,000 hosts by 8 metrics. Cell backgrounds are PalettedFills, so each cell is colored by its own value through a LUT. Only visible rows are drawn: scroll with the wheel or drag the scrollbar. Click a heading to sort by that column (highest first, again to reverse, a third time for the original order); values refresh every second and the sort follows them.',
   run({ container, theme }) {
     const r = rng(11)
     const N = 2000
@@ -56,7 +56,7 @@ export default {
       grid.setColumnBackgroundFillStyle(m + 1, new PalettedFill({ lut }))
       grid.setColumnWidth(m + 1, { min: 92 })
     })
-    grid.setColumnWidth(0, { min: 150 }).setCellChangeHighlight(false)
+    grid.setColumnWidth(0, { min: 150 }).setCellChangeHighlight(false).setSortable(true)
 
     const timer = setInterval(() => {
       for (let k = 0; k < 400; k++) {

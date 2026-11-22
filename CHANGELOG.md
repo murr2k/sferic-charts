@@ -35,6 +35,13 @@ All notable changes to Sferic Charts are documented here. The format follows
   Open-Meteo weather, microphone spectrogram and page telemetry; wave interference,
   double-pendulum chaos, hydrogen orbitals, Fourier series, Mandelbrot deep zoom and the
   logistic map.
+- `DataGrid.setSortable(true)`: a click on a heading sorts the rows by that column
+  (numbers highest first, text A to Z; again to reverse; a third time for the content
+  order), with a mark in the heading. Rows keep their content index, so `cellclick`, row
+  and cell styles, `setCellContent` and `scrollToRow` are unaffected by the display order;
+  live updates re-sort. A cell sorts by its number (a number, a cell's `value` or `bar`, or
+  text that is a number with a unit); `setSort()`, `getSort()` and a `sortchange` event
+  for code. The Server Monitoring Grid example uses it.
 
 ## [0.2.1] - 2026-10-17
 

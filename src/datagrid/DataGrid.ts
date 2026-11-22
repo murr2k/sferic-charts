@@ -51,6 +51,14 @@ interface Style { bg?: Fill; fg?: Color; font?: FontSettings; align?: CellAlignm
 
 type Drag = { axis: 'x' | 'y'; start: number; scroll0: number } | null
 
+export type SortDirection = 'ascending' | 'descending'
+
+/** A number with an optional unit after it ("12.5 %", "1,024 KB", "3/s"); hex ("0x1f") apart. */
+const LEAD_NUM = /^([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:e[-+]?\d+)?|[-+]?\.\d+)\s*(?:%|[a-zA-Zµ°]+(?:\/[a-zA-Z]+)?|\/[a-zA-Z]+)?$/i
+const HEX = /^0x[0-9a-f]+$/i
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+const SORT_MARK_W = 12
+
 const toFill = (f: Fill | Color | undefined): Fill | undefined => (f === undefined ? undefined : isColor(f) ? new SolidFill({ color: f }) : f)
 const fillColor = (f: Fill | Color | undefined): Color | undefined => (f === undefined ? undefined : isColor(f) ? f : f.getPrimaryColor())
 
@@ -108,7 +116,14 @@ export class DataGrid extends Panel {
   // interaction
   private hoverRow = -1
   private hoverBar: 'x' | 'y' | null = null
+  private hoverHead = false
   private drag: Drag = null
+  // sorting: rows stay stored in content order; `order` maps display body index -> content row
+  private sortable = false
+  private sortCol = -1
+  private sortDir: 1 | -1 = 1
+  private order: Int32Array | null = null
+  private orderDirty = false
   // GPU sparklines
   private sparkBody = new SegmentBatch()
   private sparkHead = new SegmentBatch()
@@ -151,6 +166,7 @@ export class DataGrid extends Panel {
     this.autoW = []
     this.widthsDirty = true
     this.prefixDirty = true
+    this.orderDirty = true
     this.requestRender()
     return this
   }
@@ -174,6 +190,7 @@ export class DataGrid extends Panel {
       this.flashUntil = cell.flash0 + this.flashDur
     }
     this.widthsDirty = true
+    if (this.sortCol >= 0) this.orderDirty = true
     this.requestRender()
     return this
   }
@@ -191,6 +208,7 @@ export class DataGrid extends Panel {
     this.cells.splice(row, count)
     this.prefixDirty = true
     this.widthsDirty = true
+    this.orderDirty = true
     this.requestRender()
     return this
   }
@@ -225,8 +243,105 @@ export class DataGrid extends Panel {
   setHeaderRowCount(n: number) {
     this.headerRows = Math.max(0, Math.floor(n))
     this.prefixDirty = true
+    this.orderDirty = true
     this.requestRender()
     return this
+  }
+
+  // ---------------------------------------------------------------- sorting
+
+  /**
+   * Let a click on a header cell sort the rows by that column (default false). The first
+   * click sorts numbers descending and text ascending, the second reverses, the third
+   * restores the content order. Rows keep their content index: `cellclick`, row styles,
+   * `setCellContent` and `scrollToRow` all address content rows, whatever the display order.
+   * A cell sorts by its number (a number, a cell object's `value` or `bar`, or text that is
+   * a number with an optional unit); give cells whose text mixes units a `value`.
+   */
+  setSortable(enabled: boolean) {
+    this.sortable = enabled
+    if (!enabled) this.sortCol = -1
+    this.orderDirty = true
+    this.widthsDirty = true
+    this.requestRender()
+    return this
+  }
+  /** Sort by `column` (`null` direction or a negative column: content order). */
+  setSort(column: number, direction: SortDirection | null) {
+    this.sortCol = direction === null || column < 0 ? -1 : column
+    this.sortDir = direction === 'descending' ? -1 : 1
+    this.orderDirty = true
+    this.requestRender()
+    return this
+  }
+  getSort(): { column: number; direction: SortDirection } | null {
+    return this.sortCol < 0 ? null : { column: this.sortCol, direction: this.sortDir < 0 ? 'descending' : 'ascending' }
+  }
+
+  /** Sort key of a cell: a number, a string, or null (empty: always last). */
+  private sortKey(cell: Cell | undefined, col: number): number | string | null {
+    if (!cell) return null
+    if (Number.isFinite(cell.num)) return cell.num
+    const bar = cell.obj?.bar
+    if (typeof bar === 'number' && Number.isFinite(bar)) return bar
+    const t = this.textOf(cell, col).trim()
+    if (!t) return null
+    if (HEX.test(t)) return parseInt(t, 16)
+    const m = LEAD_NUM.exec(t)
+    return m ? parseFloat(m[1].replace(/,/g, '')) : t
+  }
+
+  /** True when every non-empty cell of the column sorts as a number. */
+  private numericColumn(col: number): boolean {
+    for (let r = this.headerRows; r < this.cells.length; r++) {
+      if (typeof this.sortKey(this.cells[r]?.[col], col) === 'string') return false
+    }
+    return true
+  }
+
+  private ensureOrder() {
+    if (!this.orderDirty) return
+    this.orderDirty = false
+    this.prefixDirty = true
+    const h = this.headerRows
+    const n = Math.max(0, this.cells.length - h)
+    const col = this.sortCol
+    if (col < 0 || n < 2) {
+      this.order = null
+      return
+    }
+    const keys: (number | string | null)[] = new Array(n)
+    let numeric = true
+    for (let i = 0; i < n; i++) {
+      const k = this.sortKey(this.cells[i + h]?.[col], col)
+      keys[i] = k
+      if (typeof k === 'string') numeric = false
+    }
+    // a column with any text sorts all of it as text (numeric collation: "item 2" < "item 10")
+    if (!numeric) for (let i = 0; i < n; i++) if (keys[i] !== null) keys[i] = this.textOf(this.cells[i + h]?.[col], col).trim()
+    const dir = this.sortDir
+    const idx = Array.from({ length: n }, (_, i) => i)
+    // Array.prototype.sort is stable: equal keys keep the content order
+    idx.sort((a, b) => {
+      const ka = keys[a], kb = keys[b]
+      if (ka === null || kb === null) return ka === kb ? 0 : ka === null ? 1 : -1
+      return (numeric ? (ka as number) - (kb as number) : collator.compare(ka as string, kb as string)) * dir
+    })
+    this.order = Int32Array.from(idx, (i) => i + h)
+  }
+
+  /** Content row shown at display body index `b`. */
+  private rowOf(b: number): number {
+    return this.order ? this.order[b] : b + this.headerRows
+  }
+
+  private cycleSort(col: number) {
+    const first: 1 | -1 = this.numericColumn(col) ? -1 : 1
+    if (this.sortCol !== col) this.setSort(col, first < 0 ? 'descending' : 'ascending')
+    else if (this.sortDir === first) this.setSort(col, first < 0 ? 'ascending' : 'descending')
+    else this.setSort(-1, null)
+    const s = this.getSort()
+    this.emit('sortchange', { column: s?.column ?? -1, direction: s?.direction ?? null, chart: this })
   }
   /** Stretch columns to fill the width when the table is narrower (default true). */
   setStretchColumns(v: boolean) { this.stretch = v; this.requestRender(); return this }
@@ -305,6 +420,7 @@ export class DataGrid extends Panel {
     if (fmt) this.colFmt.set(column, fmt)
     else this.colFmt.delete(column)
     this.widthsDirty = true
+    if (column === this.sortCol) this.orderDirty = true
     this.requestRender()
     return this
   }
@@ -320,7 +436,7 @@ export class DataGrid extends Panel {
   /** Scroll so that `row` is visible. */
   scrollToRow(row: number) {
     this.ensurePrefix()
-    const b = Math.max(0, row - this.headerRows)
+    const b = Math.max(0, this.order ? this.order.indexOf(row) : row - this.headerRows)
     this.scrollY = Math.min(this.prefix[Math.min(b, this.prefix.length - 1)], this.maxScrollY || Infinity)
     this.requestRender()
     return this
@@ -375,10 +491,11 @@ export class DataGrid extends Panel {
   // ---------------------------------------------------------------- layout
 
   private ensurePrefix() {
+    this.ensureOrder()
     if (!this.prefixDirty) return
     const nb = Math.max(0, this.cells.length - this.headerRows)
     const p = new Float64Array(nb + 1)
-    for (let i = 0; i < nb; i++) p[i + 1] = p[i] + (this.rowH.get(i + this.headerRows) ?? this.defRowH)
+    for (let i = 0; i < nb; i++) p[i + 1] = p[i] + (this.rowH.get(this.rowOf(i)) ?? this.defRowH)
     this.prefix = p
     this.prefixDirty = false
   }
@@ -402,6 +519,7 @@ export class DataGrid extends Panel {
           const t = this.textOf(cell, c)
           if (t) cw = textWidth(t, this.fontOf(cell, c, r).toCSS())
           if (cell.obj?.bar !== undefined) cw = Math.max(cw, 90)
+          if (this.sortable && r === this.headerRows - 1) cw += SORT_MARK_W   // room for the sort mark
         }
         if (cw + pad * 2 > w[c]) w[c] = cw + pad * 2
       }
@@ -490,7 +608,7 @@ export class DataGrid extends Panel {
       const [r0, r1] = this.visibleBody()
       const altFill = t.isDark ? 'rgba(255,255,255,0.028)' : 'rgba(0,0,0,0.028)'
       for (let b = r0; b < r1; b++) {
-        const row = b + this.headerRows
+        const row = this.rowOf(b)
         const y = this.body.y + this.prefix[b] - this.scrollY
         const h = this.prefix[b + 1] - this.prefix[b]
         if (this.alternate && b % 2 === 1) {
@@ -577,18 +695,36 @@ export class DataGrid extends Panel {
       }
       const text = this.textOf(cell, c)
       if (!text) continue
+      const mark = this.sortable && c === this.sortCol && row === this.headerRows - 1 ? SORT_MARK_W : 0
       const fs = this.fontOf(cell, c, row)
       const fnt = fs.toCSS()
-      const fitted = fitText(text, w - pad * 2, fnt)
+      const fitted = fitText(text, w - pad * 2 - mark, fnt)
       if (!fitted) continue
       ctx.font = fnt
       ctx.fillStyle = this.fgOf(cell, c, row, bg).toCSS()
       ctx.textBaseline = 'middle'
       const al = this.alignOf(cell, c, row)
       ctx.textAlign = al
-      const tx = al === 'left' ? x + pad : al === 'right' ? x + w - pad : x + w / 2
+      const tx = al === 'left' ? x + pad : al === 'right' ? x + w - pad : x + (w - mark) / 2
       ctx.fillText(fitted, tx, y + h / 2 + 0.5)
+      if (mark) {
+        // after left-aligned or centred text, before right-aligned text
+        const tw = ctx.measureText(fitted).width
+        const mx = al === 'right' ? tx - tw - mark / 2 : al === 'left' ? tx + tw + mark / 2 : tx + tw / 2 + mark / 2
+        this.drawSortMark(ctx, mx, y + h / 2 + 0.5, this.sortDir)
+      }
     }
+  }
+
+  /** A small triangle in the current fill style: pointing up for ascending, down for descending. */
+  private drawSortMark(ctx: CanvasRenderingContext2D, cx: number, cy: number, dir: 1 | -1) {
+    const hw = 3.5, hh = 2.5
+    ctx.beginPath()
+    ctx.moveTo(cx - hw, cy + hh * dir)
+    ctx.lineTo(cx + hw, cy + hh * dir)
+    ctx.lineTo(cx, cy - hh * dir)
+    ctx.closePath()
+    ctx.fill()
   }
 
   private drawSparkArea(ctx: CanvasRenderingContext2D, d: number[], x: number, y: number, w: number, h: number, color: Color, sparks: SegmentBatch) {
@@ -723,7 +859,7 @@ export class DataGrid extends Panel {
       if (p[m + 1] <= v) lo = m + 1
       else hi = m
     }
-    return lo < p.length - 1 ? lo + this.headerRows : -1
+    return lo < p.length - 1 ? this.rowOf(lo) : -1
   }
   private colAt(px: number): number {
     const v = px - this.grid.x + this.scrollX
@@ -787,10 +923,12 @@ export class DataGrid extends Panel {
           : sb.x && rectContains({ x: sb.x.track.x, y: sb.x.track.y - 3, w: sb.x.track.w, h: sb.x.track.h + 6 }, x, y) ? 'x' : null
         const row = onBar ? -1 : this.rowAt(x, y)
         const hr = row >= this.headerRows ? row : -1
-        if (hr !== this.hoverRow || onBar !== this.hoverBar) {
+        const onHead = this.sortable && row >= 0 && row < this.headerRows && this.colAt(x) >= 0
+        if (hr !== this.hoverRow || onBar !== this.hoverBar || onHead !== this.hoverHead) {
           this.hoverRow = hr
           this.hoverBar = onBar
-          this.surface.setCursor(onBar ? 'pointer' : 'default')
+          this.hoverHead = onHead
+          this.surface.setCursor(onBar || onHead ? 'pointer' : 'default')
           return true
         }
         return false
@@ -801,14 +939,20 @@ export class DataGrid extends Panel {
         return was
       }
       case 'leave':
-        if (this.hoverRow < 0 && !this.hoverBar) return false
+        if (this.hoverRow < 0 && !this.hoverBar && !this.hoverHead) return false
         this.hoverRow = -1
         this.hoverBar = null
+        this.hoverHead = false
         return true
       case 'click': {
         const row = this.rowAt(x, y), col = this.colAt(x)
         if (row < 0 || col < 0) return false
+        // body rows are reported by their content index, whatever the sort
         this.emit('cellclick', { column: col, row, content: this.getCellContent(col, row), chart: this })
+        if (this.sortable && row < this.headerRows) {
+          this.cycleSort(col)
+          return true
+        }
         return false
       }
     }
